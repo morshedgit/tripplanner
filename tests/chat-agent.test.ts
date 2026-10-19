@@ -304,7 +304,7 @@ describe('Chat Agent Service & Conversational Engine (Issue #6)', () => {
       const response = await chatGet({} as any);
       expect(response.status).toBe(200);
 
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.status).toBe('online');
       expect(Array.isArray(json.sample_prompts)).toBe(true);
       expect(json.sample_prompts.length).toBeGreaterThan(5);
@@ -323,7 +323,7 @@ describe('Chat Agent Service & Conversational Engine (Issue #6)', () => {
       const response = await chatPost({ request: req, locals: {} } as any);
       expect(response.status).toBe(200);
 
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.trip_id).toBe('trip-kyoto-2026');
       expect(json.reply).toContain('Budget & Debt Settlement');
       expect(Array.isArray(json.actions_taken)).toBe(true);
@@ -340,7 +340,7 @@ describe('Chat Agent Service & Conversational Engine (Issue #6)', () => {
       const response = await chatPost({ request: req, locals: {} } as any);
       expect(response.status).toBe(400);
 
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.code).toBe('MISSING_MESSAGE');
       expect(json.title).toBe('Missing Required Field');
       expect(Array.isArray(json.suggested_alternatives)).toBe(true);
@@ -356,7 +356,7 @@ describe('Chat Agent Service & Conversational Engine (Issue #6)', () => {
       const response = await chatPost({ request: req, locals: {} } as any);
       expect(response.status).toBe(400);
 
-      const json = await response.json();
+      const json = (await response.json()) as any;
       expect(json.code).toBe('INVALID_JSON');
     });
   });
