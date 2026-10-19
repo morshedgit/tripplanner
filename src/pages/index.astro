@@ -1,0 +1,28 @@
+---
+import { getDb } from '../db/client';
+
+const db = await getDb(Astro.locals);
+const trips = await db.query('SELECT * FROM trips ORDER BY start_date ASC');
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TripPlanner — Collaborative Itinerary Engine</title>
+  </head>
+  <body style="font-family: system-ui, -apple-system, sans-serif; padding: 2rem; max-width: 800px; margin: 0 auto; line-height: 1.6;">
+    <h1>✈️ TripPlanner</h1>
+    <p>Astro + Cloudflare Workers / D1 / KV Foundation is active and running.</p>
+
+    <h2>Active Trips ({trips.length})</h2>
+    <ul>
+      {trips.map((trip: any) => (
+        <li>
+          <strong>{trip.title}</strong> — {trip.destination} ({trip.start_date} to {trip.end_date})
+        </li>
+      ))}
+    </ul>
+  </body>
+</html>
