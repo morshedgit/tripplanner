@@ -1,0 +1,17 @@
+name = "tripplanner"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = "./dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tripplanner-db"
+database_id = "tripplanner-db-local"
+
+[[kv_namespaces]]
+binding = "CACHE_KV"
+id = "tripplanner-kv-local"
+
+[[kv_namespaces]]
+binding = "SESSION"
+id = "tripplanner-session-local"

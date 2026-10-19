@@ -1,5 +1,13 @@
 node_modules/
-.env
+.astro/
+dist/
+.wrangler/
+.worktrees/
+data/*.db*
+data/*.db
 data/store.json
-.DS_Store
+.env
+.env.*
+!.env.example
 *.log
+.DS_Store
