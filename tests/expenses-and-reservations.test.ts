@@ -612,7 +612,7 @@ describe('Issue #4: Reservations Ledger, Multi-Currency Expenses & Splitwise Deb
       } as any);
 
       expect(postRes.status).toBe(201);
-      const postData = await postRes.json();
+      const postData: any = await postRes.json();
       expect(postData.title).toBe('JL 001 Flight to Tokyo');
       expect(postData.type).toBe('flight');
 
@@ -624,7 +624,7 @@ describe('Issue #4: Reservations Ledger, Multi-Currency Expenses & Splitwise Deb
       } as any);
 
       expect(getRes.status).toBe(200);
-      const listData = await getRes.json();
+      const listData: any = await getRes.json();
       expect(Array.isArray(listData)).toBe(true);
       expect(listData.some((r: any) => r.id === postData.id)).toBe(true);
     });
@@ -651,7 +651,7 @@ describe('Issue #4: Reservations Ledger, Multi-Currency Expenses & Splitwise Deb
       } as any);
 
       expect(patchRes.status).toBe(200);
-      const patchData = await patchRes.json();
+      const patchData: any = await patchRes.json();
       expect(patchData.cost).toBe(260.0);
 
       // DELETE
@@ -661,7 +661,7 @@ describe('Issue #4: Reservations Ledger, Multi-Currency Expenses & Splitwise Deb
       } as any);
 
       expect(deleteRes.status).toBe(200);
-      const deleteData = await deleteRes.json();
+      const deleteData: any = await deleteRes.json();
       expect(deleteData.success).toBe(true);
       expect(deleteData.deleted_reservation_id).toBe(created.id);
     });
@@ -689,7 +689,7 @@ describe('Issue #4: Reservations Ledger, Multi-Currency Expenses & Splitwise Deb
       } as any);
 
       expect(postRes.status).toBe(201);
-      const postData = await postRes.json();
+      const postData: any = await postRes.json();
       expect(postData.title).toBe('Gion Izakaya Night');
       expect(postData.splits.length).toBe(2);
 
@@ -700,7 +700,7 @@ describe('Issue #4: Reservations Ledger, Multi-Currency Expenses & Splitwise Deb
       } as any);
 
       expect(getRes.status).toBe(200);
-      const getExpensesData = await getRes.json();
+      const getExpensesData: any = await getRes.json();
       expect(Array.isArray(getExpensesData)).toBe(true);
       expect(getExpensesData.some((e: any) => e.id === postData.id)).toBe(true);
 
@@ -717,7 +717,7 @@ describe('Issue #4: Reservations Ledger, Multi-Currency Expenses & Splitwise Deb
       } as any);
 
       expect(deleteRes.status).toBe(200);
-      const deleteData = await deleteRes.json();
+      const deleteData: any = await deleteRes.json();
       expect(deleteData.success).toBe(true);
       expect(deleteData.deleted_expense_id).toBe(postData.id);
     });
@@ -729,7 +729,7 @@ describe('Issue #4: Reservations Ledger, Multi-Currency Expenses & Splitwise Deb
       } as any);
 
       expect(settleRes.status).toBe(200);
-      const data = await settleRes.json();
+      const data: any = await settleRes.json();
       expect(data.trip_id).toBe(TRIP_ID);
       expect(data.currency).toBe('USD');
       expect(data.total_spending).toBeGreaterThanOrEqual(0);

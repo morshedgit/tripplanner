@@ -106,7 +106,7 @@ export const DELETE: APIRoute = async ({ params, request, url, locals }) => {
 
   if (!expenseId) {
     try {
-      const body = await request.json();
+      const body: any = await request.json();
       expenseId = body?.expenseId || body?.id;
     } catch {
       // Optional body

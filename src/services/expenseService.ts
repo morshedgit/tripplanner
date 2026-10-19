@@ -641,7 +641,7 @@ export async function getBudgetSettlement(
 
     // Load splits for this expense and distribute baseAmt with exact penny conservation
     const expSplits = await db.query<ExpenseSplit>(
-      'SELECT * FROM expense_splits WHERE expense_id = ? ORDER BY id ASC',
+      'SELECT * FROM expense_splits WHERE expense_id = ? ORDER BY collaborator_id ASC',
       [exp.id]
     );
 
