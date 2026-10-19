@@ -606,21 +606,13 @@ export async function executeMcpTool(
         {
           trip_id: tripId,
           message: args.message,
+          actor: 'agy',
         },
         env
       );
 
       const resolvedTripId = chatResult.trip_id || tripId;
-      const updated = await bumpSessionState(db, {
-        sessionId,
-        tripId: resolvedTripId,
-        action: 'chat_command',
-        summary: chatResult.reply.slice(0, 100),
-        payload: {
-          message: args.message,
-          actions: chatResult.actions_taken,
-        },
-      });
+      const updated = await getOrCreateSession(db, sessionId);
 
       return {
         reply: chatResult.reply,
