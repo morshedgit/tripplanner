@@ -27,17 +27,111 @@ export interface ChatAction {
   payload?: any;
 }
 
+export interface ChatSessionState {
+  session_id: string;
+  active_trip_id: string;
+  active_day_number: number | null;
+  active_tab: string;
+  selected_stop_id: string | null;
+  last_actor: string;
+  last_event_summary: string;
+  state_version: number;
+  ui_context_json?: string;
+  updated_at?: string;
+}
+
+export interface WorkspaceSession {
+  session_id: string;
+  active_trip_id: string;
+  active_day_number: number | null;
+  active_tab: string;
+  selected_stop_id: string | null;
+  last_actor: string;
+  last_event_summary: string;
+  state_version: number;
+  ui_context_json: string;
+  updated_at: string;
+}
+
+export interface SessionEvent {
+  id: string;
+  session_id: string;
+  trip_id: string | null;
+  actor: string;
+  action: string;
+  summary: string;
+  state_version: number;
+  payload_json: string;
+  created_at: string;
+}
+
 export interface ChatMessageResult {
   reply: string;
   trip_id: string;
   actions_taken: ChatAction[];
   updated_trip_summary?: TripSummary | null;
+  session_state?: ChatSessionState;
 }
+
+export type ChatAgentOutput = ChatMessageResult;
 
 export interface ChatMessageInput {
   trip_id?: string;
   message: string;
   history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  actor?: string;
+}
+
+export interface SessionContext {
+  activeDayNumber?: number | null;
+  selectedStopId?: string | null;
+  activeTab?: string | null;
+}
+
+export async function ensureSessionTables(db: DatabaseAdapter): Promise<void> {
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS workspace_sessions (
+      session_id TEXT PRIMARY KEY,
+      active_trip_id TEXT NOT NULL DEFAULT 'trip-kyoto-2026',
+      active_day_number INTEGER,
+      active_tab TEXT NOT NULL DEFAULT 'itinerary',
+      selected_stop_id TEXT,
+      last_actor TEXT NOT NULL DEFAULT 'system',
+      last_event_summary TEXT NOT NULL DEFAULT 'Session initialized',
+      state_version INTEGER NOT NULL DEFAULT 1,
+      ui_context_json TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS session_events (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL DEFAULT 'default',
+      trip_id TEXT,
+      actor TEXT NOT NULL DEFAULT 'system',
+      action TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      state_version INTEGER NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  const existing = await db.queryOne<{ session_id: string }>(
+    'SELECT session_id FROM workspace_sessions WHERE session_id = ?',
+    ['default']
+  );
+  if (!existing) {
+    const firstTrip = await db.queryOne<{ id: string }>('SELECT id FROM trips ORDER BY start_date ASC LIMIT 1');
+    const defaultTripId = firstTrip?.id || 'trip-kyoto-2026';
+    await db.execute(
+      `INSERT INTO workspace_sessions (
+        session_id, active_trip_id, active_day_number, active_tab, selected_stop_id, last_actor, last_event_summary, state_version, ui_context_json
+      ) VALUES ('default', ?, 1, 'itinerary', NULL, 'system', 'Session initialized', 1, '{}')`,
+      [defaultTripId]
+    );
+  }
 }
 
 // Built-in POI Catalog for instant zero-config resolution
@@ -990,23 +1084,46 @@ export async function executeAddStop(
  */
 export async function executeMoveStop(
   db: DatabaseAdapter,
-  params: { tripId: string; placeQuery: string; targetDayNumber: number; targetSectionType?: string }
-): Promise<{ actions: ChatAction[]; reply: string }> {
-  // Find stop
-  const stops = await db.query<any>(
-    `SELECT s.id as stop_id, s.section_id, p.name as place_name, sec.day_id as old_day_id
-     FROM stops s
-     JOIN places p ON s.place_id = p.id
-     JOIN sections sec ON s.section_id = sec.id
-     WHERE sec.trip_id = ? AND p.name LIKE ?
-     LIMIT 1`,
-    [params.tripId, `%${params.placeQuery}%`]
-  );
-
-  if (stops.length === 0) {
-    throw new Error(`Could not find stop matching "${params.placeQuery}" in trip`);
+  params: {
+    tripId: string;
+    placeQuery?: string;
+    stopId?: string;
+    targetDayNumber: number;
+    targetSectionType?: string;
   }
-  const stop = stops[0];
+): Promise<{ actions: ChatAction[]; reply: string }> {
+  let stop: any = null;
+
+  if (params.stopId) {
+    stop = await db.queryOne<any>(
+      `SELECT s.id as stop_id, s.section_id, p.name as place_name, sec.day_id as old_day_id
+       FROM stops s
+       JOIN places p ON s.place_id = p.id
+       JOIN sections sec ON s.section_id = sec.id
+       WHERE s.id = ? AND sec.trip_id = ?
+       LIMIT 1`,
+      [params.stopId, params.tripId]
+    );
+  }
+
+  if (!stop && params.placeQuery) {
+    const stops = await db.query<any>(
+      `SELECT s.id as stop_id, s.section_id, p.name as place_name, sec.day_id as old_day_id
+       FROM stops s
+       JOIN places p ON s.place_id = p.id
+       JOIN sections sec ON s.section_id = sec.id
+       WHERE sec.trip_id = ? AND p.name LIKE ?
+       LIMIT 1`,
+      [params.tripId, `%${params.placeQuery}%`]
+    );
+    if (stops.length > 0) {
+      stop = stops[0];
+    }
+  }
+
+  if (!stop) {
+    throw new Error(`Could not find stop matching "${params.placeQuery || params.stopId}" in trip`);
+  }
 
   // Find target day and section
   const targetDay = await db.queryOne<Day>(
@@ -1046,7 +1163,7 @@ export async function executeMoveStop(
       {
         tool: 'move_stop',
         summary: `Moved ${stop.place_name} to Day ${params.targetDayNumber} (${targetSec.title})`,
-        payload: { stop_id: stop.stop_id, target_day: params.targetDayNumber, target_section: targetSec.title },
+        payload: { stop_id: stop.stop_id, place_name: stop.place_name, target_day: params.targetDayNumber, target_section: targetSec.title },
       },
     ],
     reply: `🔄 Moved **${stop.place_name}** to **Day ${params.targetDayNumber} (${targetSec.title})** and updated all transit connections!`,
@@ -1058,22 +1175,40 @@ export async function executeMoveStop(
  */
 export async function executeRemoveStop(
   db: DatabaseAdapter,
-  params: { tripId: string; placeQuery: string }
+  params: { tripId: string; placeQuery?: string; stopId?: string }
 ): Promise<{ actions: ChatAction[]; reply: string }> {
-  const stops = await db.query<any>(
-    `SELECT s.id as stop_id, p.name as place_name, sec.day_id
-     FROM stops s
-     JOIN places p ON s.place_id = p.id
-     JOIN sections sec ON s.section_id = sec.id
-     WHERE sec.trip_id = ? AND p.name LIKE ?
-     LIMIT 1`,
-    [params.tripId, `%${params.placeQuery}%`]
-  );
+  let stop: any = null;
 
-  if (stops.length === 0) {
-    throw new Error(`Could not find stop matching "${params.placeQuery}" in trip`);
+  if (params.stopId) {
+    stop = await db.queryOne<any>(
+      `SELECT s.id as stop_id, p.name as place_name, sec.day_id
+       FROM stops s
+       JOIN places p ON s.place_id = p.id
+       JOIN sections sec ON s.section_id = sec.id
+       WHERE s.id = ? AND sec.trip_id = ?
+       LIMIT 1`,
+      [params.stopId, params.tripId]
+    );
   }
-  const stop = stops[0];
+
+  if (!stop && params.placeQuery) {
+    const stops = await db.query<any>(
+      `SELECT s.id as stop_id, p.name as place_name, sec.day_id
+       FROM stops s
+       JOIN places p ON s.place_id = p.id
+       JOIN sections sec ON s.section_id = sec.id
+       WHERE sec.trip_id = ? AND p.name LIKE ?
+       LIMIT 1`,
+      [params.tripId, `%${params.placeQuery}%`]
+    );
+    if (stops.length > 0) {
+      stop = stops[0];
+    }
+  }
+
+  if (!stop) {
+    throw new Error(`Could not find stop matching "${params.placeQuery || params.stopId}" in trip`);
+  }
 
   // Delete transit legs referencing this stop
   await db.execute(
@@ -1634,12 +1769,49 @@ interface ParsedIntent {
     | 'calculate_budget'
     | 'manage_checklist'
     | 'summarize_itinerary'
+    | 'navigate_session'
     | 'general_chat';
   params: any;
 }
 
-export function parseNaturalLanguageIntent(message: string): ParsedIntent {
+export function parseNaturalLanguageIntent(
+  message: string,
+  sessionContext?: SessionContext
+): ParsedIntent {
   const msg = message.trim();
+
+  // 0. Navigation / Tab & Day Switching:
+  // "switch to budget tab", "open wishlist", "show Day 2", "go to reservations", "view checklists"
+  if (
+    /(?:switch|go|navigate)\s+to\s+(?:the\s+)?(itinerary|wishlist|reservations?|bookings?|budget|splits?|checklists?)\s*(?:tab)?/i.test(msg) ||
+    /open\s+(?:the\s+)?(itinerary|wishlist|reservations?|bookings?|budget|splits?|checklists?)(?:\s+tab)?/i.test(msg) ||
+    /(?:show|view|switch\s+to|go\s+to|filter\s+to)\s+day\s+(\d+)/i.test(msg) ||
+    /(?:show|view)\s+(?:the\s+)?(itinerary|wishlist|reservations?|bookings?|budget|splits?|checklists?)\s*(?:tab)?/i.test(msg)
+  ) {
+    const dayMatch = msg.match(/day\s+(\d+)/i);
+    const tabMatch = msg.match(/(itinerary|wishlist|reservations?|bookings?|budget|splits?|checklists?)/i);
+
+    let activeTab: string | undefined;
+    if (tabMatch) {
+      const rawTab = tabMatch[1].toLowerCase();
+      if (rawTab.startsWith('book') || rawTab.startsWith('reser')) activeTab = 'reservations';
+      else if (rawTab.startsWith('split') || rawTab.startsWith('budg')) activeTab = 'budget';
+      else if (rawTab.startsWith('check')) activeTab = 'checklists';
+      else if (rawTab.startsWith('wish')) activeTab = 'wishlist';
+      else if (rawTab.startsWith('itin')) activeTab = 'itinerary';
+    }
+
+    let activeDayNumber: number | undefined;
+    if (dayMatch) {
+      activeDayNumber = parseInt(dayMatch[1], 10);
+      if (!activeTab) activeTab = 'itinerary';
+    }
+
+    return {
+      intent: 'navigate_session',
+      params: { activeTab, activeDayNumber },
+    };
+  }
 
   // 1. Create Trip: "Plan a 3-day trip to Tokyo", "Create a 4-day trip to Paris", "Plan trip to Rome"
   const createMatch = msg.match(/(?:plan|create|start|new)\s+(?:a\s+)?(?:(\d+)[-\s]day\s+)?(?:trip\s+to\s+|in\s+)?([A-Za-z\s,]+)/i);
@@ -1654,8 +1826,8 @@ export function parseNaturalLanguageIntent(message: string): ParsedIntent {
     };
   }
 
-  // 2. Add Stop / Place: "Add Kinkaku-ji to Day 2 morning at 09:30", "Add Ichiran Ramen to wishlist", "Add Senso-ji to Day 1"
-  if (/^add\s+.+\s+to\s+(?:day\s+\d+|wishlist|packing)/i.test(msg) || /^add\s+/i.test(msg)) {
+  // 2. Add Stop / Place: "Add Kinkaku-ji to Day 2 morning at 09:30", "Add a cafe to this day", "Add Ichiran Ramen to wishlist", "Add Senso-ji to today"
+  if (/^add\s+.+\s+to\s+(?:day\s+\d+|this\s+day|today|current\s+day|wishlist|packing)/i.test(msg) || /^add\s+/i.test(msg)) {
     // Check if it's checklist / packing list
     if (/packing|checklist|todo/i.test(msg)) {
       const itemMatch = msg.match(/add\s+(.+?)\s+to\s+(?:the\s+)?(?:packing|checklist|todo)/i);
@@ -1686,21 +1858,30 @@ export function parseNaturalLanguageIntent(message: string): ParsedIntent {
 
     // Add Stop to itinerary or wishlist
     const dayMatch = msg.match(/day\s+(\d+)/i);
+    const hasContextualDay = /(?:this\s+day|today|current\s+day)/i.test(msg);
     const secMatch = msg.match(/(morning|afternoon|evening)/i);
     const timeMatch = msg.match(/at\s+(\d{1,2}:\d{2}(?:\s*[ap]m)?|\d{1,2}\s*[ap]m)/i);
     const wishlistMatch = /wishlist/i.test(msg);
 
+    let dayNumber: number | undefined;
+    if (dayMatch) {
+      dayNumber = parseInt(dayMatch[1], 10);
+    } else if (hasContextualDay) {
+      dayNumber = sessionContext?.activeDayNumber || 1;
+    }
+
     let placeQuery = msg
       .replace(/^add\s+/i, '')
-      .replace(/\s+to\s+(?:day\s+\d+|wishlist).*/i, '')
+      .replace(/\s+(?:to|on)\s+(?:day\s+\d+|this\s+day|today|current\s+day|wishlist).*/i, '')
       .replace(/\s+at\s+\d{1,2}:\d{2}.*/i, '')
+      .replace(/\s+(?:morning|afternoon|evening)\b/i, '')
       .trim();
 
     return {
       intent: 'add_stop',
       params: {
         placeQuery,
-        dayNumber: dayMatch ? parseInt(dayMatch[1], 10) : undefined,
+        dayNumber,
         sectionType: wishlistMatch
           ? 'wishlist'
           : secMatch
@@ -1711,36 +1892,51 @@ export function parseNaturalLanguageIntent(message: string): ParsedIntent {
     };
   }
 
-  // 3. Move / Reorder Stop: "Move Fushimi Inari to Day 2 morning"
+  // 3. Move / Reorder Stop: "Move Fushimi Inari to Day 2 morning", "Move the selected stop to Day 3", "Move this stop to Day 1 afternoon"
   if (/^move\s+/i.test(msg)) {
-    const moveMatch = msg.match(/^move\s+(.+?)\s+to\s+day\s+(\d+)(?:\s+(morning|afternoon|evening))?/i);
+    const moveMatch = msg.match(/^move\s+(.+?)\s+to\s+(?:day\s+(\d+)|(this\s+day|today|current\s+day))(?:\s+(morning|afternoon|evening))?/i);
     if (moveMatch) {
+      const rawTarget = moveMatch[1].trim();
+      const isSelected = /^(?:the\s+)?(?:selected\s+stop|this\s+stop|that\s+stop)$/i.test(rawTarget);
+      const targetDayNumber = moveMatch[2]
+        ? parseInt(moveMatch[2], 10)
+        : (sessionContext?.activeDayNumber || 1);
+      const targetSectionType = moveMatch[4] ? moveMatch[4].toLowerCase() : 'morning';
+
       return {
         intent: 'move_stop',
         params: {
-          placeQuery: moveMatch[1].trim(),
-          targetDayNumber: parseInt(moveMatch[2], 10),
-          targetSectionType: moveMatch[3] ? moveMatch[3].toLowerCase() : 'morning',
+          placeQuery: isSelected ? undefined : rawTarget,
+          stopId: isSelected ? sessionContext?.selectedStopId || undefined : undefined,
+          targetDayNumber,
+          targetSectionType,
         },
       };
     }
   }
 
-  // 4. Delete / Remove Stop: "Remove Nishiki Market", "Delete Kinkaku-ji"
+  // 4. Delete / Remove Stop: "Remove Nishiki Market", "Delete Kinkaku-ji", "Remove selected stop", "Delete this stop"
   if (/^(?:remove|delete)\s+/i.test(msg)) {
-    const placeQuery = msg.replace(/^(?:remove|delete)\s+(?:stop\s+)?/i, '').trim();
+    const rawTarget = msg.replace(/^(?:remove|delete)\s+(?:stop\s+)?/i, '').trim();
+    const isSelected = /^(?:the\s+)?(?:selected\s+stop|this\s+stop|that\s+stop)$/i.test(rawTarget) || rawTarget === '';
     return {
       intent: 'remove_stop',
-      params: { placeQuery },
+      params: {
+        placeQuery: isSelected ? undefined : rawTarget,
+        stopId: isSelected ? sessionContext?.selectedStopId || undefined : undefined,
+      },
     };
   }
 
-  // 5. Optimize Route: "Optimize Day 1 route", "Optimize Day 2"
-  if (/optimize\s+(?:day\s+(\d+)|route\s+for\s+day\s+(\d+))/i.test(msg)) {
-    const dayMatch = msg.match(/\d+/);
+  // 5. Optimize Route: "Optimize Day 1 route", "Optimize Day 2", "Optimize today", "Optimize this day"
+  if (/optimize\s+(?:day\s+(\d+)|route\s+for\s+day\s+(\d+)|today|this\s+day|current\s+day|route)/i.test(msg)) {
+    const dayMatch = msg.match(/day\s+(\d+)/i) || msg.match(/\b(\d+)\b/);
+    const dayNumber = dayMatch
+      ? parseInt(dayMatch[1] || dayMatch[0], 10)
+      : (sessionContext?.activeDayNumber || 1);
     return {
       intent: 'optimize_route',
-      params: { dayNumber: dayMatch ? parseInt(dayMatch[0], 10) : 1 },
+      params: { dayNumber },
     };
   }
 
@@ -1791,12 +1987,16 @@ export function parseNaturalLanguageIntent(message: string): ParsedIntent {
     };
   }
 
-  // 9. Summarize Itinerary: "Summarize our trip", "What's planned for Day 1?", "Show itinerary"
+  // 9. Summarize Itinerary: "Summarize our trip", "What's planned for Day 1?", "What's planned for today?", "Show itinerary"
   if (/summarize|overview|itinerary|what['’]?s\s+planned|schedule/i.test(msg)) {
     const dayMatch = msg.match(/day\s+(\d+)/i);
+    const hasContextualDay = /(?:this\s+day|today|current\s+day)/i.test(msg);
+    const dayNumber = dayMatch
+      ? parseInt(dayMatch[1], 10)
+      : (hasContextualDay ? (sessionContext?.activeDayNumber || 1) : undefined);
     return {
       intent: 'summarize_itinerary',
-      params: { dayNumber: dayMatch ? parseInt(dayMatch[1], 10) : undefined },
+      params: { dayNumber },
     };
   }
 
@@ -1821,15 +2021,38 @@ export async function processChatMessage(
   env?: any
 ): Promise<ChatMessageResult> {
   const { message } = input;
-  let activeTripId = input.trip_id;
 
-  // Resolve trip if not provided
-  if (!activeTripId) {
-    const firstTrip = await db.queryOne<Trip>('SELECT * FROM trips ORDER BY start_date ASC LIMIT 1');
+  // 1. Ensure session tables and default session record exist
+  await ensureSessionTables(db);
+  let session = await db.queryOne<WorkspaceSession>(
+    'SELECT * FROM workspace_sessions WHERE session_id = ?',
+    ['default']
+  );
+
+  let activeTripId = input.trip_id || session?.active_trip_id;
+
+  // Resolve trip if not provided or doesn't exist
+  if (activeTripId) {
+    const checkTrip = await db.queryOne<Trip>('SELECT id FROM trips WHERE id = ?', [activeTripId]);
+    if (!checkTrip) {
+      const firstTrip = await db.queryOne<Trip>('SELECT id FROM trips ORDER BY start_date ASC LIMIT 1');
+      if (firstTrip) {
+        activeTripId = firstTrip.id;
+      }
+    }
+  } else {
+    const firstTrip = await db.queryOne<Trip>('SELECT id FROM trips ORDER BY start_date ASC LIMIT 1');
     if (firstTrip) {
       activeTripId = firstTrip.id;
     }
   }
+
+  // Contextual session state for natural language references
+  const sessionContext: SessionContext = {
+    activeDayNumber: session?.active_day_number ?? 1,
+    selectedStopId: session?.selected_stop_id ?? null,
+    activeTab: session?.active_tab ?? 'itinerary',
+  };
 
   // Attempt external LLM tool calling if env?.AI (Workers AI) or env?.OPENAI_API_KEY is configured
   // If not configured or if an error occurs, seamlessly fall through to our rock-solid deterministic engine!
@@ -1843,11 +2066,33 @@ export async function processChatMessage(
   }
 
   // Deterministic intent parsing
-  const parsed = parseNaturalLanguageIntent(message);
+  const parsed = parseNaturalLanguageIntent(message, sessionContext);
   let reply = '';
   let actionsTaken: ChatAction[] = [];
 
   switch (parsed.intent) {
+    case 'navigate_session': {
+      const { activeTab, activeDayNumber } = parsed.params;
+      const parts: string[] = [];
+      const payload: any = {};
+      if (activeTab) {
+        parts.push(`switched to **${activeTab}** tab`);
+        payload.active_tab = activeTab;
+      }
+      if (activeDayNumber !== undefined) {
+        parts.push(`filtered to **Day ${activeDayNumber}**`);
+        payload.active_day_number = activeDayNumber;
+      }
+      const summary = parts.join(', ') || 'Navigated workspace session';
+      actionsTaken.push({
+        tool: 'navigate_session',
+        summary: `Navigated UI: ${summary.replace(/\*\*/g, '')}`,
+        payload,
+      });
+      reply = `🧭 UI navigation updated: ${summary}!`;
+      break;
+    }
+
     case 'create_trip': {
       const res = await executeCreateTrip(db, parsed.params);
       activeTripId = res.trip.id;
@@ -1973,7 +2218,8 @@ export async function processChatMessage(
           `• *"Split $400 for hotel paid by Alice between Alice and Bob"*\n` +
           `• *"Who owes whom?"*\n` +
           `• *"Add JR Pass to packing list"*\n` +
-          `• *"Summarize our trip"*`;
+          `• *"Summarize our trip"*\n` +
+          `• *"Switch to budget tab"*`;
       } else {
         reply = `Welcome to **TripPlanner**! ✈️\n\n` +
           `You don't have an active trip yet. You can tell me:\n` +
@@ -1982,6 +2228,89 @@ export async function processChatMessage(
       }
       break;
     }
+  }
+
+  // Session state tracking & version increment on actions
+  const lastActor = input.actor || 'chat';
+  let sessionState: ChatSessionState;
+
+  if (actionsTaken.length > 0) {
+    const lastEventSummary = actionsTaken.map((a) => a.summary).join('; ');
+    const primaryAction = actionsTaken[0]?.tool || 'chat_mutation';
+    const payload = actionsTaken[0]?.payload || {};
+    const newVersion = (session?.state_version || 1) + 1;
+
+    let newTripId = activeTripId || session?.active_trip_id || 'trip-kyoto-2026';
+    let newDayNum = session?.active_day_number ?? 1;
+    let newTab = session?.active_tab || 'itinerary';
+    let newSelectedStopId = session?.selected_stop_id ?? null;
+
+    if (primaryAction === 'navigate_session') {
+      if (payload.active_tab) newTab = payload.active_tab;
+      if (payload.active_day_number !== undefined) newDayNum = payload.active_day_number;
+    } else if (parsed.params?.dayNumber !== undefined && typeof parsed.params.dayNumber === 'number') {
+      newDayNum = parsed.params.dayNumber;
+    } else if (parsed.params?.targetDayNumber !== undefined && typeof parsed.params.targetDayNumber === 'number') {
+      newDayNum = parsed.params.targetDayNumber;
+    }
+
+    if (primaryAction === 'add_stop' && payload.stop_id) {
+      newSelectedStopId = payload.stop_id;
+    } else if (primaryAction === 'remove_stop') {
+      if (session?.selected_stop_id === payload.stop_id) {
+        newSelectedStopId = null;
+      }
+    } else if (primaryAction === 'move_stop' && payload.stop_id) {
+      newSelectedStopId = payload.stop_id;
+    }
+
+    await db.execute(
+      `UPDATE workspace_sessions
+       SET active_trip_id = ?,
+           active_day_number = ?,
+           active_tab = ?,
+           selected_stop_id = ?,
+           last_actor = ?,
+           last_event_summary = ?,
+           state_version = ?,
+           updated_at = datetime('now')
+       WHERE session_id = 'default'`,
+      [newTripId, newDayNum, newTab, newSelectedStopId, lastActor, lastEventSummary, newVersion]
+    );
+
+    const eventId = generateId('evt');
+    await db.execute(
+      `INSERT INTO session_events (
+        id, session_id, trip_id, actor, action, summary, state_version, payload_json, created_at
+      ) VALUES (?, 'default', ?, ?, ?, ?, ?, ?, datetime('now'))`,
+      [eventId, newTripId, lastActor, primaryAction, lastEventSummary, newVersion, JSON.stringify(payload)]
+    );
+
+    sessionState = {
+      session_id: 'default',
+      active_trip_id: newTripId,
+      active_day_number: newDayNum,
+      active_tab: newTab,
+      selected_stop_id: newSelectedStopId,
+      last_actor: lastActor,
+      last_event_summary: lastEventSummary,
+      state_version: newVersion,
+    };
+  } else {
+    const currentSession = await db.queryOne<WorkspaceSession>(
+      'SELECT * FROM workspace_sessions WHERE session_id = ?',
+      ['default']
+    );
+    sessionState = {
+      session_id: currentSession?.session_id || 'default',
+      active_trip_id: currentSession?.active_trip_id || activeTripId || '',
+      active_day_number: currentSession?.active_day_number ?? null,
+      active_tab: currentSession?.active_tab || 'itinerary',
+      selected_stop_id: currentSession?.selected_stop_id ?? null,
+      last_actor: currentSession?.last_actor || 'system',
+      last_event_summary: currentSession?.last_event_summary || 'Session initialized',
+      state_version: currentSession?.state_version || 1,
+    };
   }
 
   // Fetch updated summary
@@ -1995,5 +2324,6 @@ export async function processChatMessage(
     trip_id: activeTripId || '',
     actions_taken: actionsTaken,
     updated_trip_summary: updatedSummary,
+    session_state: sessionState,
   };
 }
