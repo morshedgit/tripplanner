@@ -960,7 +960,7 @@ export async function executeCreateTrip(
         payload: { trip_id: tripId, title, destination: destClean, days: dayCount },
       },
     ],
-    reply: `🎉 **Trip Created!** I've planned your **${title}** from **${startDateStr}** to **${endDateStr}**.\n\n` +
+    reply: `**Trip Created!** I've planned your **${title}** from **${startDateStr}** to **${endDateStr}**.\n\n` +
       `• Created **${dayCount} days** with Morning, Afternoon, and Evening sections.\n` +
       `• Populated starter highlights and synchronized transit calculations.\n` +
       `• Ready for more stops, reservations, and budget splitting!`,
@@ -1072,9 +1072,9 @@ export async function executeAddStop(
         payload: { stop_id: stopId, place_id: place.id, place_name: place.name, section_id: targetSection.id },
       },
     ],
-    reply: `📍 Added **${place.name}** to your **${locationDesc}**!\n\n` +
+    reply: `Added **${place.name}** to your **${locationDesc}**!\n\n` +
       `• Address: ${place.formatted_address}\n` +
-      `• Rating: ⭐ ${place.rating || 4.5} / 5.0\n` +
+      `• Rating: ${place.rating || 4.5} / 5.0\n` +
       (transitLegs.length > 0 ? `• Transit legs automatically recalculated for Day ${targetDay?.day_number}.` : ''),
   };
 }
@@ -1166,7 +1166,7 @@ export async function executeMoveStop(
         payload: { stop_id: stop.stop_id, place_name: stop.place_name, target_day: params.targetDayNumber, target_section: targetSec.title },
       },
     ],
-    reply: `🔄 Moved **${stop.place_name}** to **Day ${params.targetDayNumber} (${targetSec.title})** and updated all transit connections!`,
+    reply: `Moved **${stop.place_name}** to **Day ${params.targetDayNumber} (${targetSec.title})** and updated all transit connections!`,
   };
 }
 
@@ -1232,7 +1232,7 @@ export async function executeRemoveStop(
         payload: { stop_id: stop.stop_id, place_name: stop.place_name },
       },
     ],
-    reply: `🗑️ Removed **${stop.place_name}** from your itinerary and refreshed travel times.`,
+    reply: `Removed **${stop.place_name}** from your itinerary and refreshed travel times.`,
   };
 }
 
@@ -1269,7 +1269,7 @@ export async function executeOptimizeRoute(
           summary: `Day ${params.dayNumber} has ${stops.length} stops; route is already optimal`,
         },
       ],
-      reply: `ℹ️ **Day ${params.dayNumber}** currently has ${stops.length} stop${stops.length === 1 ? '' : 's'}. You need at least 3 stops to run TSP 2-Opt route optimization!`,
+      reply: `**Day ${params.dayNumber}** currently has ${stops.length} stop${stops.length === 1 ? '' : 's'}. You need at least 3 stops to run TSP 2-Opt route optimization!`,
     };
   }
 
@@ -1302,7 +1302,7 @@ export async function executeOptimizeRoute(
         },
       },
     ],
-    reply: `⚡ **Day ${params.dayNumber} Route Optimized!**\n\n` +
+    reply: `**Day ${params.dayNumber} Route Optimized!**\n\n` +
       `• Distance reduced from **${(oldDistance / 1000).toFixed(1)} km** to **${(newDistance / 1000).toFixed(1)} km** (saved ~${savedKm} km)!\n\n` +
       `**Optimal Order:**\n${routeNames}`,
   };
@@ -1355,7 +1355,7 @@ export async function executeAddReservation(
         payload: { reservation_id: resId, title: params.title, cost: params.cost, currency },
       },
     ],
-    reply: `📑 **Reservation Saved!**\n\n` +
+    reply: `**Reservation Saved!**\n\n` +
       `• **${params.title}** (${params.type})\n` +
       `• Cost: **${currency} ${params.cost}**\n` +
       (params.confirmationCode ? `• Confirmation Code: \`${params.confirmationCode}\`\n` : '') +
@@ -1488,7 +1488,7 @@ export async function executeLogExpense(
         },
       },
     ],
-    reply: `💸 **Expense Logged & Split!**\n\n` +
+    reply: `**Expense Logged & Split!**\n\n` +
       `• **${params.title}**: **${currency} ${params.amount}**\n` +
       `• Paid by: **${payer.name}**\n` +
       `• Split between: **${memberNames}** (**${currency} ${splitAmount}** each).`,
@@ -1558,7 +1558,7 @@ export async function executeCalculateBudget(
 
   const transfers = simplifyDebts(balances, currency);
 
-  let reply = `💰 **Budget & Debt Settlement Overview**\n\n` +
+  let reply = `**Budget & Debt Settlement Overview**\n\n` +
     `• Total Recorded Spend: **${currency} ${totalExpenses.toFixed(2)}**\n\n` +
     `**Collaborator Balances:**\n`;
 
@@ -1569,10 +1569,10 @@ export async function executeCalculateBudget(
 
   reply += `\n**Optimal Settlement (Who Owes Whom):**\n`;
   if (transfers.length === 0) {
-    reply += `✅ All group balances are fully settled! No transfers needed.\n`;
+    reply += `All group balances are fully settled! No transfers needed.\n`;
   } else {
     for (const t of transfers) {
-      reply += `👉 **${t.from_collaborator_name}** pays **${t.to_collaborator_name}**: **${t.currency} ${t.amount.toFixed(2)}**\n`;
+      reply += `• **${t.from_collaborator_name}** pays **${t.to_collaborator_name}**: **${t.currency} ${t.amount.toFixed(2)}**\n`;
     }
   }
 
@@ -1624,7 +1624,7 @@ export async function executeManageChecklist(
           summary: `Checked off "${params.itemTitle}" from ${checklist.title}`,
         },
       ],
-      reply: `✅ Checked off **"${params.itemTitle}"** from your **${checklist.title}**!`,
+      reply: `Checked off **"${params.itemTitle}"** from your **${checklist.title}**!`,
     };
   } else {
     // Add item
@@ -1648,7 +1648,7 @@ export async function executeManageChecklist(
           payload: { item_id: itemId, checklist_id: checklist.id, title: params.itemTitle },
         },
       ],
-      reply: `📋 Added **"${params.itemTitle}"** to your **${checklist.title}**!`,
+      reply: `Added **"${params.itemTitle}"** to your **${checklist.title}**!`,
     };
   }
 }
@@ -1681,7 +1681,7 @@ export async function executeSummarizeItinerary(
     };
   }
 
-  let reply = `🗺️ **Itinerary for ${trip.title}** (${trip.destination})\n\n`;
+  let reply = `**Itinerary for ${trip.title}** (${trip.destination})\n\n`;
 
   for (const day of days) {
     reply += `### Day ${day.day_number} — ${day.date}\n`;
@@ -1708,7 +1708,7 @@ export async function executeSummarizeItinerary(
         reply += `**${sec.title}**:\n`;
         for (const st of stops) {
           const time = st.arrival_time ? ` at ${st.arrival_time}` : '';
-          const rating = st.rating ? ` (⭐ ${st.rating})` : '';
+          const rating = st.rating ? ` (${st.rating}/5)` : '';
           reply += `  • **${st.place_name}**${time}${rating}\n`;
           if (st.user_notes) {
             reply += `    _${st.user_notes}_\n`;
@@ -1736,7 +1736,7 @@ export async function executeSummarizeItinerary(
       const totalSecs = legs.reduce((acc, l) => acc + l.duration_seconds, 0);
       const totalMins = Math.round(totalSecs / 60);
       const totalKm = (totalDist / 1000).toFixed(1);
-      reply += `\n🚗 *Day transit summary: ~${totalKm} km across ${legs.length} leg(s) (~${totalMins} min total travel time)*\n`;
+      reply += `\n*Day transit summary: ~${totalKm} km across ${legs.length} leg(s) (~${totalMins} min total travel time)*\n`;
     }
     reply += `\n`;
   }
@@ -2089,7 +2089,7 @@ export async function processChatMessage(
         summary: `Navigated UI: ${summary.replace(/\*\*/g, '')}`,
         payload,
       });
-      reply = `🧭 UI navigation updated: ${summary}!`;
+      reply = `UI navigation updated: ${summary}!`;
       break;
     }
 
@@ -2209,7 +2209,7 @@ export async function processChatMessage(
     default: {
       if (activeTripId) {
         const summary = await getTripSummary(db, activeTripId);
-        reply = `I am your **TripPlanner AI Assistant**! 🧳\n\n` +
+        reply = `I am your **TripPlanner AI Assistant**!\n\n` +
           `Active trip: **${summary?.title || 'Kyoto Autumn Expedition'}** (${summary?.stop_count || 0} stops, ${summary?.day_count || 0} days).\n\n` +
           `**Here are some things you can ask me to do:**\n` +
           `• *"Add Kinkaku-ji to Day 2 morning at 09:30"*\n` +
@@ -2221,7 +2221,7 @@ export async function processChatMessage(
           `• *"Summarize our trip"*\n` +
           `• *"Switch to budget tab"*`;
       } else {
-        reply = `Welcome to **TripPlanner**! ✈️\n\n` +
+        reply = `Welcome to **TripPlanner**!\n\n` +
           `You don't have an active trip yet. You can tell me:\n` +
           `• *"Plan a 3-day trip to Tokyo"*\n` +
           `• *"Create a 4-day trip to Paris"*`;
