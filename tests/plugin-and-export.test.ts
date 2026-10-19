@@ -35,7 +35,7 @@ describe('Issue #5: ChatGPT Plugin Manifest, OpenAPI 3.1 Spec & Multi-Format Exp
       expect(response.status).toBe(200);
       expect(response.headers.get('Content-Type')).toContain('application/json');
 
-      const manifest = await response.json();
+      const manifest = (await response.json()) as any;
       expect(manifest.schema_version).toBe('v1');
       expect(manifest.name_for_human).toBe('TripPlanner');
       expect(manifest.name_for_model).toBe('tripplanner');
@@ -63,7 +63,7 @@ describe('Issue #5: ChatGPT Plugin Manifest, OpenAPI 3.1 Spec & Multi-Format Exp
       expect(response.status).toBe(200);
       expect(response.headers.get('Content-Type')).toContain('application/json');
 
-      const spec = await response.json();
+      const spec = (await response.json()) as any;
       expect(spec.openapi).toBe('3.1.0');
       expect(spec.info.title).toBe('TripPlanner API');
       expect(spec.info.version).toBe('1.0.0');
@@ -333,7 +333,7 @@ describe('Issue #5: ChatGPT Plugin Manifest, OpenAPI 3.1 Spec & Multi-Format Exp
 
       expect(response.status).toBe(404);
       expect(response.headers.get('Content-Type')).toContain('application/problem+json');
-      const problem = await response.json();
+      const problem = (await response.json()) as any;
       expect(problem.status).toBe(404);
       expect(problem.code).toBe('TRIP_NOT_FOUND');
     });
