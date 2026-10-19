@@ -7,6 +7,7 @@ import {
   solveTsp2Opt,
   simplifyDebts,
   convertCurrency,
+  ensureSessionTables,
 } from '../src/services/chatAgentService';
 import { POST as chatPost, GET as chatGet } from '../src/pages/api/v1/chat';
 
@@ -358,6 +359,168 @@ describe('Chat Agent Service & Conversational Engine (Issue #6)', () => {
 
       const json = (await response.json()) as any;
       expect(json.code).toBe('INVALID_JSON');
+    });
+  });
+
+  describe('Issue #17: Reactive AGY Session State Synchronization & Contextual Commands', () => {
+    it('initializes session tables and defaults active_trip_id to session.active_trip_id when omitted', async () => {
+      await ensureSessionTables(db);
+      await db.execute(
+        "UPDATE workspace_sessions SET active_trip_id = 'trip-kyoto-2026', state_version = 1 WHERE session_id = 'default'"
+      );
+
+      // Call processChatMessage without trip_id
+      const res = await processChatMessage(db, {
+        message: 'Who owes whom?',
+      });
+
+      expect(res.trip_id).toBe('trip-kyoto-2026');
+      expect(res.session_state).toBeDefined();
+      expect(res.session_state?.active_trip_id).toBe('trip-kyoto-2026');
+      expect(res.session_state?.state_version).toBe(2);
+    });
+
+    it('resolves contextual day references ("today", "this day") using session.active_day_number', async () => {
+      await ensureSessionTables(db);
+      await db.execute(
+        "UPDATE workspace_sessions SET active_trip_id = 'trip-kyoto-2026', active_day_number = 2 WHERE session_id = 'default'"
+      );
+
+      const res = await processChatMessage(db, {
+        trip_id: 'trip-kyoto-2026',
+        message: 'Add Kinkaku-ji to today afternoon',
+      });
+
+      expect(res.actions_taken[0].tool).toBe('add_stop');
+      expect(res.actions_taken[0].summary).toContain('Day 2');
+
+      // Verify stop is in Day 2
+      const stop = await db.queryOne<any>(
+        `SELECT s.*, sec.day_id, d.day_number
+         FROM stops s
+         JOIN sections sec ON s.section_id = sec.id
+         JOIN days d ON sec.day_id = d.id
+         WHERE s.id = ?`,
+        [res.actions_taken[0].payload.stop_id]
+      );
+      expect(stop).toBeDefined();
+      expect(stop.day_number).toBe(2);
+    });
+
+    it('resolves contextual stop references ("selected stop", "this stop") using session.selected_stop_id', async () => {
+      await ensureSessionTables(db);
+
+      // Pick an existing stop from Day 1
+      const stop = await db.queryOne<any>(
+        `SELECT s.id, p.name FROM stops s
+         JOIN places p ON s.place_id = p.id
+         JOIN sections sec ON s.section_id = sec.id
+         WHERE sec.trip_id = 'trip-kyoto-2026' LIMIT 1`
+      );
+      expect(stop).toBeDefined();
+
+      // Set selected_stop_id in session
+      await db.execute(
+        "UPDATE workspace_sessions SET selected_stop_id = ?, active_trip_id = 'trip-kyoto-2026' WHERE session_id = 'default'",
+        [stop.id]
+      );
+
+      // Move selected stop
+      const moveRes = await processChatMessage(db, {
+        trip_id: 'trip-kyoto-2026',
+        message: 'Move the selected stop to Day 2 afternoon',
+      });
+
+      expect(moveRes.actions_taken[0].tool).toBe('move_stop');
+      expect(moveRes.actions_taken[0].payload.stop_id).toBe(stop.id);
+
+      // Delete this stop
+      const delRes = await processChatMessage(db, {
+        trip_id: 'trip-kyoto-2026',
+        message: 'Delete this stop',
+      });
+
+      expect(delRes.actions_taken[0].tool).toBe('remove_stop');
+      expect(delRes.actions_taken[0].payload.stop_id).toBe(stop.id);
+
+      // Check selected_stop_id was cleared in session
+      const sess = await db.queryOne<any>(
+        "SELECT selected_stop_id FROM workspace_sessions WHERE session_id = 'default'"
+      );
+      expect(sess.selected_stop_id).toBeNull();
+    });
+
+    it('handles natural-language UI navigation ("switch to budget tab", "show Day 2")', async () => {
+      await ensureSessionTables(db);
+
+      const navRes = await processChatMessage(db, {
+        trip_id: 'trip-kyoto-2026',
+        message: 'switch to budget tab',
+      });
+
+      expect(navRes.actions_taken[0].tool).toBe('navigate_session');
+      expect(navRes.session_state?.active_tab).toBe('budget');
+
+      const sess = await db.queryOne<any>(
+        "SELECT active_tab FROM workspace_sessions WHERE session_id = 'default'"
+      );
+      expect(sess.active_tab).toBe('budget');
+
+      const dayRes = await processChatMessage(db, {
+        trip_id: 'trip-kyoto-2026',
+        message: 'show Day 2',
+      });
+      expect(dayRes.session_state?.active_day_number).toBe(2);
+    });
+
+    it('increments state_version and inserts a session_events record on mutations', async () => {
+      await ensureSessionTables(db);
+      await db.execute("UPDATE workspace_sessions SET state_version = 10 WHERE session_id = 'default'");
+
+      const res = await processChatMessage(db, {
+        trip_id: 'trip-kyoto-2026',
+        message: 'Add JR Pass to packing list',
+        actor: 'agy',
+      });
+
+      expect(res.session_state?.state_version).toBe(11);
+      expect(res.session_state?.last_actor).toBe('agy');
+
+      const sess = await db.queryOne<any>(
+        "SELECT state_version, last_actor, last_event_summary FROM workspace_sessions WHERE session_id = 'default'"
+      );
+      expect(sess.state_version).toBe(11);
+      expect(sess.last_actor).toBe('agy');
+      expect(sess.last_event_summary).toContain('JR Pass');
+
+      const event = await db.queryOne<any>(
+        "SELECT * FROM session_events WHERE state_version = 11 AND session_id = 'default'"
+      );
+      expect(event).toBeDefined();
+      expect(event.actor).toBe('agy');
+      expect(event.action).toBe('manage_checklist');
+      expect(event.summary).toContain('JR Pass');
+    });
+
+    it('POST /api/v1/chat endpoint returns session_state in HTTP response', async () => {
+      const req = new Request('http://localhost/api/v1/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          trip_id: 'trip-kyoto-2026',
+          message: 'Who owes whom?',
+          actor: 'ui',
+        }),
+      });
+
+      const response = await chatPost({ request: req, locals: {} } as any);
+      expect(response.status).toBe(200);
+
+      const json = (await response.json()) as any;
+      expect(json.session_state).toBeDefined();
+      expect(json.session_state.active_trip_id).toBe('trip-kyoto-2026');
+      expect(json.session_state.state_version).toBeGreaterThanOrEqual(1);
+      expect(json.session_state.last_event_summary).toBeTruthy();
     });
   });
 });

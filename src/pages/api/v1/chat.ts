@@ -25,6 +25,8 @@ export const GET: APIRoute = async () => {
       'Who owes whom?',
       'Add JR Pass to packing list',
       'Summarize our trip',
+      'Switch to budget tab',
+      'Optimize today',
     ],
   });
 };
@@ -77,6 +79,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
         trip_id: body.trip_id,
         message: body.message.trim(),
         history: Array.isArray(body.history) ? body.history : undefined,
+        actor: typeof body.actor === 'string' ? body.actor : 'chat',
       },
       env
     );
