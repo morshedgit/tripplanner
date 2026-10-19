@@ -2,6 +2,8 @@
 import { getDb } from '../db/client';
 import { ensureSessionTables, type WorkspaceSession } from '../services/chatAgentService';
 import { getIconSvg } from '../lib/icons';
+import { getPlaceImageUrl, getDestinationCoverUrl } from '../lib/placeImages';
+import { getBudgetSettlement } from '../services/expenseService';
 import type {
   Trip,
   Day,
@@ -56,6 +58,7 @@ let reservations: Reservation[] = [];
 let expenses: any[] = [];
 let checklists: any[] = [];
 let tripNotes: TripNote[] = [];
+let settlement: any = null;
 
 if (activeTrip) {
   const tripId = activeTrip.id;
@@ -85,6 +88,11 @@ if (activeTrip) {
      ORDER BY s.sort_order ASC, s.created_at ASC`,
     [tripId]
   );
+
+  // Attach thumbnail photo URL to each stop for client map popups and rendering
+  for (const st of stops) {
+    st.thumbnail_url = getPlaceImageUrl(st.place_name, st.category, activeTrip.destination);
+  }
 
   transitLegs = await db.query<TransitLeg>(
     'SELECT * FROM transit_legs WHERE trip_id = ? ORDER BY created_at ASC',
@@ -132,15 +140,47 @@ if (activeTrip) {
     'SELECT * FROM trip_notes WHERE trip_id = ? ORDER BY created_at ASC',
     [tripId]
   );
+
+  // Load Splitwise budget settlement
+  try {
+    settlement = await getBudgetSettlement(db, tripId);
+  } catch (err) {
+    settlement = null;
+  }
 }
 
 const selectedStop = stops.find((s) => s.id === selectedStopId) || null;
 const selectedStopName = selectedStop ? selectedStop.place_name : 'None';
 
-// Calculate totals
+// Calculate totals & cover image
 const totalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
 const budgetCap = activeTrip?.budget_cap || 2500;
 const budgetPercent = Math.min(100, Math.round((totalExpenses / budgetCap) * 100));
+const destinationCoverUrl = activeTrip
+  ? getDestinationCoverUrl(activeTrip.destination, activeTrip.cover_image_url)
+  : getDestinationCoverUrl('wanderlust');
+
+// Day color palette matching map markers and timeline accents
+const DAY_COLORS = ['#2563eb', '#16a34a', '#d97706', '#9333ea', '#e11d48', '#0891b2'];
+
+const categorySpending = settlement?.spending_by_category
+  ? Object.entries(settlement.spending_by_category)
+      .map(([cat, amt]) => ({ cat, amt: Number(amt) }))
+      .filter((item) => item.amt > 0)
+  : [];
+
+const settlementBalances = (settlement?.balances || []).map((b: any) => {
+  const net = Number(b.net_balance || 0);
+  const isPos = net > 0;
+  const isNeg = 0 > net;
+  return {
+    ...b,
+    isPositive: isPos,
+    isNegative: isNeg,
+    netStr: `${isPos ? '+' : ''}${net.toFixed(2)}`,
+    badgeCls: isPos ? 'balance-positive' : isNeg ? 'balance-negative' : 'balance-zero',
+  };
+});
 
 // Default dates for New Trip inline form
 const now = new Date();
@@ -160,6 +200,7 @@ const initialClientData = {
   expenses,
   checklists,
   tripNotes,
+  settlement,
   session: {
     active_trip_id: activeTrip?.id || '',
     active_tab: normalizedActiveTab,
@@ -345,7 +386,75 @@ const initialClientData = {
       .btn-primary:hover { background: var(--primary-hover); }
       .btn-outline { background: #ffffff; border-color: var(--border); color: var(--text-secondary); }
       .btn-outline:hover { background: #f8fafc; color: var(--text-primary); }
-      .btn-sm { padding: 0.22rem 0.55rem; font-size: 0.75rem; }
+      .btn-sm { padding: 0.25rem 0.6rem; font-size: 0.76rem; }
+
+      /* Sleek Header Popover Dropdown */
+      .header-menu {
+        position: relative;
+        display: inline-block;
+      }
+
+      .header-menu summary {
+        list-style: none;
+        user-select: none;
+      }
+
+      .header-menu summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .header-dropdown-menu {
+        position: absolute;
+        right: 0;
+        top: calc(100% + 6px);
+        background: #ffffff;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.12);
+        width: 235px;
+        z-index: 2000;
+        padding: 0.4rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+      }
+
+      .header-dropdown-label {
+        font-size: 0.68rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        font-weight: 700;
+        color: var(--text-muted);
+        padding: 0.3rem 0.55rem 0.15rem 0.55rem;
+      }
+
+      .header-dropdown-divider {
+        height: 1px;
+        background: var(--border);
+        margin: 0.3rem 0;
+      }
+
+      .dropdown-item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.38rem 0.6rem;
+        font-size: 0.78rem;
+        color: var(--text-secondary);
+        border-radius: 6px;
+        text-decoration: none;
+        background: transparent;
+        border: none;
+        width: 100%;
+        text-align: left;
+        cursor: pointer;
+        transition: background 0.12s ease;
+      }
+
+      .dropdown-item:hover {
+        background: var(--primary-light);
+        color: var(--primary);
+      }
 
       /* ================= COLLAPSIBLE NEW TRIP PANEL ================= */
       .new-trip-panel {
@@ -635,6 +744,127 @@ const initialClientData = {
         flex-direction: column;
       }
 
+      /* Editorial Hero Banner */
+      .trip-hero-banner {
+        height: 200px;
+        border-radius: 14px;
+        margin-bottom: 1.25rem;
+        position: relative;
+        overflow: hidden;
+        background-size: cover;
+        background-position: center;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        padding: 1.25rem;
+        color: #ffffff;
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.12);
+        flex-shrink: 0;
+      }
+
+      .hero-content {
+        position: relative;
+        z-index: 2;
+        display: flex;
+        flex-direction: column;
+        gap: 0.45rem;
+      }
+
+      .hero-top-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .hero-dest-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        background: rgba(255, 255, 255, 0.22);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        border-radius: 20px;
+        padding: 0.2rem 0.65rem;
+        font-size: 0.72rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #ffffff;
+      }
+
+      .hero-title {
+        font-size: 1.55rem;
+        font-weight: 800;
+        letter-spacing: -0.025em;
+        color: #ffffff;
+        line-height: 1.2;
+        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.45);
+      }
+
+      .hero-pills {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .hero-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        background: rgba(15, 23, 42, 0.55);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        border-radius: 16px;
+        padding: 0.2rem 0.6rem;
+        font-size: 0.72rem;
+        font-weight: 600;
+        color: #f8fafc;
+      }
+
+      .hero-collaborators {
+        display: flex;
+        align-items: center;
+      }
+
+      .hero-avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        border: 2px solid #ffffff;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+        object-fit: cover;
+        margin-left: -8px;
+        background: var(--primary);
+        color: #ffffff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.75rem;
+        font-weight: 700;
+      }
+
+      .hero-avatar:first-child {
+        margin-left: 0;
+      }
+
+      .hero-avatar-initial {
+        background: linear-gradient(135deg, #2563eb, #7c3aed);
+      }
+
+      .hero-collab-label {
+        font-size: 0.7rem;
+        font-weight: 600;
+        color: #e2e8f0;
+        margin-left: 0.45rem;
+        background: rgba(15, 23, 42, 0.5);
+        padding: 0.15rem 0.45rem;
+        border-radius: 10px;
+      }
+
+      /* Canvas Tabs */
       .canvas-tabs {
         display: flex;
         border-bottom: 1px solid var(--border);
@@ -672,9 +902,60 @@ const initialClientData = {
 
       .canvas-content {
         padding: 1.25rem;
-        max-width: 820px;
+        max-width: 860px;
         margin: 0 auto;
         width: 100%;
+      }
+
+      /* Sticky Day-Pill Carousel (Itinerary Tab) */
+      .day-pill-carousel {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        overflow-x: auto;
+        padding: 0.2rem 0.1rem 0.85rem 0.1rem;
+        margin-bottom: 0.85rem;
+        scrollbar-width: none;
+      }
+
+      .day-pill-carousel::-webkit-scrollbar {
+        display: none;
+      }
+
+      .day-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.35rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.78rem;
+        font-weight: 600;
+        border: 1px solid var(--border);
+        background: #ffffff;
+        color: var(--text-secondary);
+        cursor: pointer;
+        white-space: nowrap;
+        transition: all 0.15s ease;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      }
+
+      .day-pill:hover {
+        border-color: var(--primary);
+        color: var(--primary);
+      }
+
+      .day-pill.active {
+        background: var(--primary);
+        color: #ffffff;
+        border-color: var(--primary);
+        box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
+      }
+
+      .day-pill-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
       }
 
       /* Inline interactive controls */
@@ -728,16 +1009,16 @@ const initialClientData = {
       .day-card {
         background: #ffffff;
         border: 1px solid var(--border);
-        border-radius: 11px;
+        border-radius: 12px;
         margin-bottom: 1.25rem;
         overflow: hidden;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
       }
 
       .day-header {
         background: #f8fafc;
         border-bottom: 1px solid var(--border);
-        padding: 0.65rem 0.9rem;
+        padding: 0.65rem 0.95rem;
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -776,7 +1057,7 @@ const initialClientData = {
       }
 
       .section-group {
-        padding: 0.85rem;
+        padding: 0.85rem 1rem;
         border-bottom: 1px solid #f1f5f9;
       }
 
@@ -790,28 +1071,56 @@ const initialClientData = {
         letter-spacing: 0.05em;
         font-weight: 700;
         color: var(--text-muted);
-        margin-bottom: 0.6rem;
+        margin-bottom: 0.65rem;
         display: flex;
         align-items: center;
         gap: 0.35rem;
       }
 
+      /* Connected Vertical Timeline Spine */
+      .timeline-spine {
+        position: relative;
+        padding-left: 20px;
+      }
+
+      .timeline-spine::before {
+        content: '';
+        position: absolute;
+        left: 10px;
+        top: 14px;
+        bottom: 14px;
+        width: 2px;
+        background: #e2e8f0;
+        border-radius: 1px;
+      }
+
+      .timeline-step {
+        position: relative;
+        margin-bottom: 0.75rem;
+      }
+
+      .timeline-step:last-child {
+        margin-bottom: 0;
+      }
+
+      /* Stop Cards with 76x76 Photo Thumbnails */
       .stop-card {
         background: #ffffff;
         border: 1px solid var(--border);
-        border-radius: 8px;
+        border-radius: 11px;
         padding: 0.65rem 0.85rem;
         display: flex;
-        align-items: flex-start;
+        align-items: center;
         gap: 0.75rem;
         transition: all 0.15s ease;
         position: relative;
         cursor: pointer;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
       }
 
       .stop-card:hover {
         border-color: #cbd5e1;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+        box-shadow: 0 3px 10px rgba(0, 0, 0, 0.05);
       }
 
       .stop-card.highlighted {
@@ -834,8 +1143,19 @@ const initialClientData = {
         flex-shrink: 0;
       }
 
+      .stop-thumb {
+        width: 76px;
+        height: 76px;
+        border-radius: 10px;
+        object-fit: cover;
+        flex-shrink: 0;
+        border: 1px solid rgba(0, 0, 0, 0.06);
+        background: #f1f5f9;
+      }
+
       .stop-info {
         flex: 1;
+        min-width: 0;
       }
 
       .stop-name {
@@ -844,13 +1164,40 @@ const initialClientData = {
         color: #1e293b;
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
         gap: 0.45rem;
+      }
+
+      .rating-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.2rem;
+        font-size: 0.72rem;
+        font-weight: 700;
+        color: #f59e0b;
+        background: #fffbeb;
+        border: 1px solid #fef3c7;
+        border-radius: 4px;
+        padding: 0.1rem 0.35rem;
+      }
+
+      .category-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        font-size: 0.68rem;
+        font-weight: 600;
+        color: #475569;
+        background: #f1f5f9;
+        border-radius: 4px;
+        padding: 0.12rem 0.4rem;
+        text-transform: capitalize;
       }
 
       .stop-meta {
         font-size: 0.72rem;
         color: var(--text-secondary);
-        margin-top: 0.15rem;
+        margin-top: 0.2rem;
         display: flex;
         flex-wrap: wrap;
         align-items: center;
@@ -864,7 +1211,7 @@ const initialClientData = {
       }
 
       .stop-notes {
-        font-size: 0.75rem;
+        font-size: 0.74rem;
         color: #64748b;
         margin-top: 0.35rem;
         background: #f8fafc;
@@ -873,17 +1220,407 @@ const initialClientData = {
         border-left: 2px solid #cbd5e1;
       }
 
-      .transit-leg {
-        margin: 0.4rem 0 0.4rem 1.4rem;
-        padding: 0.3rem 0.65rem;
+      .stop-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        flex-shrink: 0;
+      }
+
+      /* Move dropdown */
+      .move-dropdown {
+        position: relative;
+        display: inline-block;
+      }
+
+      .move-dropdown summary {
+        list-style: none;
+      }
+      .move-dropdown summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .move-dropdown-menu {
+        position: absolute;
+        right: 0;
+        top: calc(100% + 4px);
+        background: #ffffff;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+        width: 190px;
+        z-index: 500;
+        padding: 0.35rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+      }
+
+      .move-dropdown-header {
+        font-size: 0.68rem;
+        font-weight: 700;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        padding: 0.25rem 0.45rem;
+      }
+
+      .move-dropdown-item {
+        background: transparent;
+        border: none;
+        padding: 0.35rem 0.5rem;
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        border-radius: 5px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        text-align: left;
+        width: 100%;
+        transition: background 0.12s ease;
+      }
+
+      .move-dropdown-item:hover:not(:disabled) {
+        background: var(--primary-light);
+        color: var(--primary);
+      }
+
+      .move-dropdown-item:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+
+      .move-wishlist-item {
+        color: #d97706;
+        border-top: 1px solid var(--border);
+        margin-top: 0.2rem;
+        padding-top: 0.4rem;
+      }
+
+      .delete-btn {
+        color: #ef4444 !important;
+      }
+
+      .delete-btn:hover {
+        background: #fef2f2 !important;
+        border-color: #fca5a5 !important;
+      }
+
+      /* Inline transit connector along spine */
+      .transit-connector {
+        margin: 0.35rem 0 0.35rem 1.25rem;
+        padding: 0.25rem 0.6rem;
         background: #f8fafc;
         border-left: 2px dashed #94a3b8;
-        border-radius: 0 5px 5px 0;
+        border-radius: 0 6px 6px 0;
         font-size: 0.72rem;
         color: #475569;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+      }
+
+      /* Boarding Pass Bookings */
+      .booking-ticket-card {
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: #ffffff;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+        padding: 0.75rem 1rem;
+      }
+
+      .booking-ticket-stub {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.2rem;
+        padding-right: 0.75rem;
+        border-right: 1px dashed #cbd5e1;
+        flex-shrink: 0;
+        min-width: 55px;
+      }
+
+      .booking-type-icon {
+        color: var(--primary);
+      }
+
+      .booking-type-badge {
+        font-size: 0.65rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: var(--text-muted);
+      }
+
+      .booking-thumb {
+        width: 76px;
+        height: 76px;
+        border-radius: 10px;
+        object-fit: cover;
+      }
+
+      .booking-ticket-cost {
+        flex-shrink: 0;
+      }
+
+      .cost-badge {
+        font-size: 0.8rem;
+        font-weight: 700;
+        padding: 0.25rem 0.55rem;
+      }
+
+      /* Visual Splitwise Settlement & Budget Styles */
+      .budget-overview-card {
+        background: #ffffff;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.1rem;
+        margin-bottom: 1.25rem;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+      }
+
+      .budget-section-card {
+        background: #ffffff;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.1rem;
+        margin-bottom: 1.25rem;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+      }
+
+      .section-subheading {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+      }
+
+      .settlement-transfers-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.65rem;
+        margin-bottom: 1rem;
+      }
+
+      .settlement-card {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.75rem 1rem;
+        background: #f8fafc;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        gap: 0.75rem;
+      }
+
+      .transfer-flow {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        flex: 1;
+      }
+
+      .transfer-actor {
         display: flex;
         align-items: center;
         gap: 0.45rem;
+      }
+
+      .collab-avatar-sm {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        color: #ffffff;
+        font-weight: 700;
+        font-size: 0.72rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+
+      .actor-info {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .actor-name {
+        font-weight: 700;
+        font-size: 0.825rem;
+        color: #1e293b;
+      }
+
+      .actor-role {
+        font-size: 0.68rem;
+        color: var(--text-muted);
+        text-transform: uppercase;
+      }
+
+      .transfer-arrow {
+        color: var(--primary);
+        display: inline-flex;
+        align-items: center;
+      }
+
+      .transfer-amount-wrap {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-shrink: 0;
+      }
+
+      .transfer-amount-pill {
+        background: #dcfce7;
+        color: #15803d;
+        border: 1px solid #bbf7d0;
+        font-weight: 700;
+        font-size: 0.85rem;
+        padding: 0.22rem 0.65rem;
+        border-radius: 16px;
+      }
+
+      .settle-btn {
+        font-size: 0.72rem;
+        padding: 0.2rem 0.5rem;
+      }
+
+      .settled-empty-card {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.85rem 1rem;
+        background: #f0fdf4;
+        border: 1px solid #bbf7d0;
+        border-radius: 9px;
+        color: #166534;
+        font-size: 0.825rem;
+        font-weight: 600;
+        margin-bottom: 1rem;
+      }
+
+      .collab-balances-section {
+        border-top: 1px solid var(--border);
+        padding-top: 0.85rem;
+      }
+
+      .balance-section-title {
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: var(--text-secondary);
+        margin-bottom: 0.6rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .collaborator-balances-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 0.65rem;
+      }
+
+      .collab-balance-card {
+        background: #f8fafc;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        padding: 0.75rem 0.85rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+      }
+
+      .collab-balance-header {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .collab-name-wrap {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .collab-name {
+        font-size: 0.825rem;
+        font-weight: 700;
+        color: #1e293b;
+      }
+
+      .collab-sub {
+        font-size: 0.68rem;
+        color: var(--text-muted);
+      }
+
+      .net-balance-badge {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        font-size: 0.68rem;
+      }
+
+      .balance-positive strong { color: #15803d; font-size: 0.85rem; }
+      .balance-negative strong { color: #b91c1c; font-size: 0.85rem; }
+      .balance-zero strong { color: #64748b; font-size: 0.85rem; }
+
+      /* Category spend breakdown */
+      .category-breakdown-card {
+        background: #ffffff;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.1rem;
+        margin-bottom: 1.25rem;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+      }
+
+      .category-progress-bar {
+        display: flex;
+        height: 10px;
+        width: 100%;
+        border-radius: 5px;
+        overflow: hidden;
+        background: #e2e8f0;
+        margin: 0.7rem 0 0.5rem 0;
+      }
+
+      .category-bar-slice {
+        height: 100%;
+        transition: width 0.3s ease;
+      }
+
+      .slice-lodging, .dot-lodging { background: #3b82f6; }
+      .slice-food, .dot-food { background: #f97316; }
+      .slice-transport, .dot-transport { background: #8b5cf6; }
+      .slice-activities, .dot-activities { background: #10b981; }
+      .slice-shopping, .dot-shopping { background: #ec4899; }
+      .slice-other, .dot-other { background: #64748b; }
+
+      .category-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.55rem;
+        margin-top: 0.35rem;
+      }
+
+      .legend-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        font-size: 0.72rem;
+        color: var(--text-secondary);
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        padding: 0.15rem 0.45rem;
+        border-radius: 5px;
+      }
+
+      .legend-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        display: inline-block;
+      }
+
+      .legend-name {
+        text-transform: capitalize;
       }
 
       /* ----- RIGHT PANE: LEAFLET MAP ----- */
@@ -899,26 +1636,54 @@ const initialClientData = {
         height: 100%;
       }
 
+      /* Glassmorphic Map Controls Overlay */
       .map-overlay-controls {
         position: absolute;
-        top: 10px;
-        right: 10px;
+        top: 12px;
+        right: 12px;
         z-index: 500;
-        background: #ffffff;
-        padding: 0.3rem 0.55rem;
-        border-radius: 6px;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+        background: rgba(255, 255, 255, 0.88);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.5);
+        padding: 0.35rem 0.65rem;
+        border-radius: 10px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
         display: flex;
         align-items: center;
         gap: 0.45rem;
         font-size: 0.78rem;
+        font-weight: 600;
+        color: #1e293b;
+      }
+
+      .overlay-filter-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        color: var(--text-secondary);
       }
 
       .map-overlay-controls select {
         border: 1px solid var(--border);
-        border-radius: 4px;
-        padding: 0.2rem 0.4rem;
+        border-radius: 6px;
+        padding: 0.2rem 0.45rem;
         font-size: 0.75rem;
+        background: #ffffff;
+        color: #1e293b;
+        outline: none;
+        cursor: pointer;
+      }
+
+      /* Custom Retina Map Markers */
+      .custom-map-pin {
+        background: transparent !important;
+        border: none !important;
+      }
+
+      .custom-map-pin:hover .map-retina-pin {
+        transform: rotate(-45deg) scale(1.2) !important;
+        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4) !important;
       }
 
       @media (max-width: 1100px) {
@@ -964,35 +1729,44 @@ const initialClientData = {
               <span class="icon-inline" set:html={getIconSvg('calendar', 12)}></span>
               <span>{activeTrip.start_date} → {activeTrip.end_date}</span>
             </span>
-            <span class="badge badge-orange">
-              <span class="icon-inline" set:html={getIconSvg('wallet', 12)}></span>
-              <span>{activeTrip.currency} {budgetCap} budget</span>
-            </span>
           </div>
         )}
       </div>
 
       <div class="header-right">
-        <a href="/api/v1/openapi.json" target="_blank" class="btn btn-outline btn-sm">
-          <span class="icon-inline" set:html={getIconSvg('file-code', 14)}></span>
-          <span>OpenAPI</span>
-        </a>
-        <a href="/.well-known/ai-plugin.json" target="_blank" class="btn btn-outline btn-sm">
-          <span class="icon-inline" set:html={getIconSvg('plug', 14)}></span>
-          <span>Plugin</span>
-        </a>
-        <button class="btn btn-outline btn-sm" onclick="exportData('markdown')">
-          <span class="icon-inline" set:html={getIconSvg('download', 14)}></span>
-          <span>Markdown</span>
-        </button>
-        <button class="btn btn-outline btn-sm" onclick="exportData('ical')">
-          <span class="icon-inline" set:html={getIconSvg('calendar', 14)}></span>
-          <span>.ics</span>
-        </button>
-        <button class="btn btn-outline btn-sm" onclick="exportData('csv')">
-          <span class="icon-inline" set:html={getIconSvg('table', 14)}></span>
-          <span>CSV</span>
-        </button>
+        <!-- Sleek Consolidated Popover Dropdown -->
+        <details class="header-menu">
+          <summary class="btn btn-outline btn-sm">
+            <span class="icon-inline" set:html={getIconSvg('download', 14)}></span>
+            <span>Export &amp; Tools ▾</span>
+          </summary>
+          <div class="header-dropdown-menu">
+            <div class="header-dropdown-label">API &amp; Integrations</div>
+            <a href="/api/v1/openapi.json" target="_blank" class="dropdown-item">
+              <span class="icon-inline" set:html={getIconSvg('file-code', 14)}></span>
+              <span>OpenAPI Specification</span>
+            </a>
+            <a href="/.well-known/ai-plugin.json" target="_blank" class="dropdown-item">
+              <span class="icon-inline" set:html={getIconSvg('plug', 14)}></span>
+              <span>ChatGPT / AI Plugin</span>
+            </a>
+            <div class="header-dropdown-divider"></div>
+            <div class="header-dropdown-label">Export Data</div>
+            <button type="button" class="dropdown-item" onclick="exportData('markdown')">
+              <span class="icon-inline" set:html={getIconSvg('file-text', 14)}></span>
+              <span>Export Markdown Itinerary</span>
+            </button>
+            <button type="button" class="dropdown-item" onclick="exportData('ical')">
+              <span class="icon-inline" set:html={getIconSvg('calendar', 14)}></span>
+              <span>Export iCal (.ics) Calendar</span>
+            </button>
+            <button type="button" class="dropdown-item" onclick="exportData('csv')">
+              <span class="icon-inline" set:html={getIconSvg('table', 14)}></span>
+              <span>Export Expenses (CSV)</span>
+            </button>
+          </div>
+        </details>
+
         <button class="btn btn-primary btn-sm" onclick="toggleNewTripPanel()">
           <span class="icon-inline" set:html={getIconSvg('plus', 14)}></span>
           <span>New Trip</span>
@@ -1143,7 +1917,7 @@ const initialClientData = {
           </button>
           <button data-tab="budget" class={`canvas-tab ${normalizedActiveTab === 'budget' ? 'active' : ''}`} onclick="handleTabClick('budget', this)">
             <span class="icon-inline" set:html={getIconSvg('wallet', 15)}></span>
-            <span>Budget & Splits</span>
+            <span>Budget &amp; Splits</span>
           </button>
           <button data-tab="checklists" class={`canvas-tab ${normalizedActiveTab === 'checklists' ? 'active' : ''}`} onclick="handleTabClick('checklists', this)">
             <span class="icon-inline" set:html={getIconSvg('list-checks', 15)}></span>
@@ -1152,8 +1926,78 @@ const initialClientData = {
         </nav>
 
         <div class="canvas-content">
+          <!-- 1. Editorial Trip Hero Header -->
+          {activeTrip && (
+            <div
+              class="trip-hero-banner"
+              style={`background-image: linear-gradient(to top, rgba(15,23,42,0.85) 0%, rgba(15,23,42,0.3) 60%, transparent 100%), url('${destinationCoverUrl}');`}
+            >
+              <div class="hero-content">
+                <div class="hero-top-row">
+                  <span class="hero-dest-pill">
+                    <span class="icon-inline" set:html={getIconSvg('map-pin', 13)}></span>
+                    <span>{activeTrip.destination}</span>
+                  </span>
+                  <div class="hero-collaborators" title="Trip Collaborators">
+                    {collaborators.map((c) => (
+                      c.avatar_url ? (
+                        <img src={c.avatar_url} class="hero-avatar" alt={c.name} title={`${c.name} (${c.role})`} />
+                      ) : (
+                        <div class="hero-avatar hero-avatar-initial" title={`${c.name} (${c.role})`}>
+                          {c.name.charAt(0)}
+                        </div>
+                      )
+                    ))}
+                    <span class="hero-collab-label">{collaborators.length} traveler{collaborators.length === 1 ? '' : 's'}</span>
+                  </div>
+                </div>
+
+                <h1 class="hero-title">{activeTrip.title}</h1>
+
+                <div class="hero-pills">
+                  <span class="hero-pill">
+                    <span class="icon-inline" set:html={getIconSvg('calendar', 13)}></span>
+                    <span>{activeTrip.start_date} → {activeTrip.end_date}</span>
+                  </span>
+                  <span class="hero-pill">
+                    <span class="icon-inline" set:html={getIconSvg('wallet', 13)}></span>
+                    <span>{activeTrip.currency} {budgetCap} budget</span>
+                  </span>
+                  {totalExpenses > 0 && (
+                    <span class="hero-pill">
+                      <span class="icon-inline" set:html={getIconSvg('dollar', 13)}></span>
+                      <span>{activeTrip.currency} {totalExpenses.toFixed(2)} spent ({budgetPercent}%)</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           <!-- TAB 1: ITINERARY -->
           <div id="tab-itinerary" class="tab-panel" style={normalizedActiveTab === 'itinerary' ? 'display: block;' : 'display: none;'}>
+            <!-- Sticky Day-Pill Carousel -->
+            <div class="day-pill-carousel" id="dayPillCarousel">
+              <button
+                type="button"
+                class={`day-pill ${activeDayNumber === null ? 'active' : ''}`}
+                onclick="handleDayPillSelect('all', this)"
+              >
+                <span class="icon-inline" set:html={getIconSvg('map', 13)}></span>
+                <span>All Days</span>
+              </button>
+              {days.map((d) => (
+                <button
+                  type="button"
+                  class={`day-pill ${activeDayNumber === d.day_number ? 'active' : ''}`}
+                  onclick={`handleDayPillSelect(${d.day_number}, this)`}
+                >
+                  <span class="day-pill-dot" style={`background: ${DAY_COLORS[(d.day_number - 1) % DAY_COLORS.length]};`}></span>
+                  <span>Day {d.day_number} · {d.date}</span>
+                </button>
+              ))}
+            </div>
+
             <!-- Interactive "+ Add Stop" inline bar -->
             <div class="inline-control-card">
               <div class="inline-card-title">
@@ -1193,14 +2037,16 @@ const initialClientData = {
                 <div class="day-card" id={`day-card-${day.day_number}`}>
                   <div class="day-header">
                     <div class="day-title-wrap">
-                      <span class="day-num">Day {day.day_number}</span>
+                      <span class="day-num" style={`color: ${DAY_COLORS[(day.day_number - 1) % DAY_COLORS.length]};`}>
+                        Day {day.day_number}
+                      </span>
                       <span class="day-date">{day.date}</span>
                     </div>
                     <div style="display: flex; align-items: center; gap: 0.45rem;">
                       {totalMeters > 0 && (
                         <span class="day-transit-badge">
                           <span class="icon-inline" set:html={getIconSvg('car', 13)}></span>
-                          <span>~{(totalMeters / 1000).toFixed(1)} km • {Math.round(totalSecs / 60)} min</span>
+                          <span>~{(totalMeters / 1000).toFixed(1)} km · {Math.round(totalSecs / 60)} min</span>
                         </span>
                       )}
                       <button
@@ -1235,89 +2081,131 @@ const initialClientData = {
                           <span>{secType}</span>
                         </div>
 
-                        {secStops.map((stop, sIdx) => {
-                          const nextLeg = dayLegs.find((l) => l.from_stop_id === stop.id);
-                          const isSelected = stop.id === selectedStopId;
-                          const targetMoveDay = day.day_number === 1 && days.length > 1 ? 2 : 1;
+                        <div class="timeline-spine">
+                          {secStops.map((stop) => {
+                            const dayIndex = dayStops.indexOf(stop) + 1;
+                            const nextLeg = dayLegs.find((l) => l.from_stop_id === stop.id);
+                            const isSelected = stop.id === selectedStopId;
+                            const targetMoveDay = day.day_number === 1 && days.length > 1 ? 2 : 1;
+                            const thumbUrl = getPlaceImageUrl(stop.place_name, stop.category, activeTrip?.destination);
 
-                          return (
-                            <div>
-                              <div
-                                class={`stop-card ${isSelected ? 'highlighted' : ''}`}
-                                id={`stop-${stop.id}`}
-                                onmouseenter={`highlightMapMarker('${stop.id}')`}
-                                onmouseleave={`unhighlightMapMarker('${stop.id}')`}
-                                onclick={`selectStop('${stop.id}', '${stop.place_name.replace(/'/g, "\\'")}')`}
-                              >
-                                <div class="pin-badge">{sIdx + 1}</div>
-                                <div class="stop-info">
-                                  <div class="stop-name">
-                                    <span>{stop.place_name}</span>
-                                    {stop.rating && (
-                                      <span style="font-size: 0.72rem; color: #f59e0b; display: inline-flex; align-items: center; gap: 0.2rem;">
-                                        <span class="icon-inline" set:html={getIconSvg('star', 12)}></span>
-                                        <span>{stop.rating}</span>
+                            return (
+                              <div class="timeline-step">
+                                <div
+                                  class={`stop-card ${isSelected ? 'highlighted' : ''}`}
+                                  id={`stop-${stop.id}`}
+                                  onmouseenter={`highlightMapMarker('${stop.id}')`}
+                                  onmouseleave={`unhighlightMapMarker('${stop.id}')`}
+                                  onclick={`selectStop('${stop.id}', '${stop.place_name.replace(/'/g, "\\'")}')`}
+                                >
+                                  <div class="pin-badge" style={`background: ${DAY_COLORS[(day.day_number - 1) % DAY_COLORS.length]};`}>
+                                    {dayIndex}
+                                  </div>
+
+                                  <img
+                                    class="stop-thumb"
+                                    src={thumbUrl}
+                                    alt={stop.place_name}
+                                    loading="lazy"
+                                  />
+
+                                  <div class="stop-info">
+                                    <div class="stop-name">
+                                      <span>{stop.place_name}</span>
+                                      {stop.rating && (
+                                        <span class="rating-badge">
+                                          <span class="icon-inline" set:html={getIconSvg('star', 12)}></span>
+                                          <span>{stop.rating}</span>
+                                        </span>
+                                      )}
+                                      <span class="category-badge">
+                                        <span class="icon-inline" set:html={getIconSvg(
+                                          stop.category === 'museum' ? 'building' :
+                                          stop.category === 'restaurant' ? 'tag' :
+                                          stop.category === 'lodging' ? 'hotel' :
+                                          stop.category === 'transit' ? 'transit' : 'map-pin',
+                                          11
+                                        )}></span>
+                                        <span>{stop.category || 'Sight'}</span>
                                       </span>
+                                    </div>
+
+                                    <div class="stop-meta">
+                                      {stop.arrival_time && (
+                                        <span>
+                                          <span class="icon-inline" set:html={getIconSvg('clock', 12)}></span>
+                                          <span>{stop.arrival_time}</span>
+                                        </span>
+                                      )}
+                                      {stop.duration_minutes && (
+                                        <span>
+                                          <span class="icon-inline" set:html={getIconSvg('hourglass', 12)}></span>
+                                          <span>{stop.duration_minutes} min</span>
+                                        </span>
+                                      )}
+                                      <span>
+                                        <span class="icon-inline" set:html={getIconSvg('map-pin', 12)}></span>
+                                        <span>{stop.formatted_address}</span>
+                                      </span>
+                                    </div>
+
+                                    {stop.user_notes && (
+                                      <div class="stop-notes">{stop.user_notes}</div>
                                     )}
                                   </div>
-                                  <div class="stop-meta">
-                                    {stop.arrival_time && (
-                                      <span>
-                                        <span class="icon-inline" set:html={getIconSvg('clock', 12)}></span>
-                                        <span>{stop.arrival_time}</span>
-                                      </span>
-                                    )}
-                                    {stop.duration_minutes && (
-                                      <span>
-                                        <span class="icon-inline" set:html={getIconSvg('hourglass', 12)}></span>
-                                        <span>{stop.duration_minutes} min</span>
-                                      </span>
-                                    )}
-                                    <span>
-                                      <span class="icon-inline" set:html={getIconSvg('tag', 12)}></span>
-                                      <span>{stop.category}</span>
-                                    </span>
-                                    <span>
-                                      <span class="icon-inline" set:html={getIconSvg('map-pin', 12)}></span>
-                                      <span>{stop.formatted_address}</span>
-                                    </span>
+
+                                  <div class="stop-actions" onclick="event.stopPropagation()">
+                                    <details class="move-dropdown">
+                                      <summary class="btn btn-outline btn-sm move-btn" title="Move Stop">
+                                        <span class="icon-inline" set:html={getIconSvg('arrow-right-left', 12)}></span>
+                                        <span>Move ▾</span>
+                                      </summary>
+                                      <div class="move-dropdown-menu">
+                                        <div class="move-dropdown-header">Move to Day:</div>
+                                        {days.map((d) => (
+                                          <button
+                                            type="button"
+                                            class={`move-dropdown-item ${d.id === day.id ? 'active' : ''}`}
+                                            disabled={d.id === day.id}
+                                            onclick={`handleMoveStop('${stop.id}', '${stop.place_name.replace(/'/g, "\\'")}', ${d.day_number}, 'afternoon')`}
+                                          >
+                                            Day {d.day_number} ({d.date})
+                                          </button>
+                                        ))}
+                                        <button
+                                          type="button"
+                                          class="move-dropdown-item move-wishlist-item"
+                                          onclick={`handleMoveStop('${stop.id}', '${stop.place_name.replace(/'/g, "\\'")}', 'wishlist', 'wishlist')`}
+                                        >
+                                          <span class="icon-inline" set:html={getIconSvg('bookmark', 11)}></span>
+                                          <span>Move to Wishlist</span>
+                                        </button>
+                                      </div>
+                                    </details>
+
+                                    <button
+                                      class="btn btn-outline btn-sm delete-btn"
+                                      title="Delete Stop"
+                                      onclick={`event.stopPropagation(); handleDeleteStop('${stop.id}', '${stop.place_name.replace(/'/g, "\\'")}', ${day.day_number})`}
+                                    >
+                                      <span class="icon-inline" set:html={getIconSvg('x', 13)}></span>
+                                    </button>
                                   </div>
-                                  {stop.user_notes && (
-                                    <div class="stop-notes">{stop.user_notes}</div>
-                                  )}
                                 </div>
-                                <div style="display: flex; gap: 0.3rem;">
-                                  <button
-                                    class="btn btn-outline btn-sm"
-                                    title={`Move to Day ${targetMoveDay}`}
-                                    onclick={`event.stopPropagation(); handleMoveStop('${stop.id}', '${stop.place_name.replace(/'/g, "\\'")}', ${targetMoveDay}, 'afternoon')`}
-                                  >
-                                    <span class="icon-inline" set:html={getIconSvg('arrow-right-left', 12)}></span>
-                                    <span>Move</span>
-                                  </button>
-                                  <button
-                                    class="btn btn-outline btn-sm"
-                                    style="color: #ef4444;"
-                                    title="Delete Stop"
-                                    onclick={`event.stopPropagation(); handleDeleteStop('${stop.id}', '${stop.place_name.replace(/'/g, "\\'")}', ${day.day_number})`}
-                                  >
-                                    <span class="icon-inline" set:html={getIconSvg('x', 13)}></span>
-                                  </button>
-                                </div>
+
+                                {nextLeg && (
+                                  <div class="transit-connector">
+                                    <span
+                                      class="icon-inline"
+                                      set:html={getIconSvg(nextLeg.transit_mode === 'walking' ? 'walk' : nextLeg.transit_mode === 'driving' ? 'car' : 'train-front', 13)}
+                                    ></span>
+                                    <span>{nextLeg.route_instructions}</span>
+                                  </div>
+                                )}
                               </div>
-
-                              {nextLeg && (
-                                <div class="transit-leg">
-                                  <span
-                                    class="icon-inline"
-                                    set:html={getIconSvg(nextLeg.transit_mode === 'walking' ? 'footprints' : nextLeg.transit_mode === 'driving' ? 'car' : 'train-front', 13)}
-                                  ></span>
-                                  <span>{nextLeg.route_instructions}</span>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                        </div>
                       </div>
                     );
                   })}
@@ -1346,40 +2234,55 @@ const initialClientData = {
               {stops.filter((s) => !s.day_id).length === 0 ? (
                 <p style="color: var(--text-muted); font-size: 0.825rem;">No unscheduled places. Add any spots you want to visit later!</p>
               ) : (
-                stops.filter((s) => !s.day_id).map((stop) => (
-                  <div
-                    class={`stop-card ${stop.id === selectedStopId ? 'highlighted' : ''}`}
-                    id={`stop-${stop.id}`}
-                    onclick={`selectStop('${stop.id}', '${stop.place_name.replace(/'/g, "\\'")}')`}
-                  >
-                    <div class="pin-badge" style="background: #94a3b8;" set:html={getIconSvg('bookmark', 13)}></div>
-                    <div class="stop-info">
-                      <div class="stop-name">{stop.place_name}</div>
-                      <div class="stop-meta">
-                        <span>
-                          <span class="icon-inline" set:html={getIconSvg('map-pin', 12)}></span>
-                          <span>{stop.formatted_address}</span>
-                        </span>
+                stops.filter((s) => !s.day_id).map((stop) => {
+                  const thumbUrl = getPlaceImageUrl(stop.place_name, stop.category, activeTrip?.destination);
+                  return (
+                    <div
+                      class={`stop-card ${stop.id === selectedStopId ? 'highlighted' : ''}`}
+                      id={`stop-${stop.id}`}
+                      onclick={`selectStop('${stop.id}', '${stop.place_name.replace(/'/g, "\\'")}')`}
+                    >
+                      <div class="pin-badge" style="background: #94a3b8;" set:html={getIconSvg('bookmark', 13)}></div>
+                      <img class="stop-thumb" src={thumbUrl} alt={stop.place_name} loading="lazy" />
+                      <div class="stop-info">
+                        <div class="stop-name">
+                          <span>{stop.place_name}</span>
+                          {stop.rating && (
+                            <span class="rating-badge">
+                              <span class="icon-inline" set:html={getIconSvg('star', 12)}></span>
+                              <span>{stop.rating}</span>
+                            </span>
+                          )}
+                          <span class="category-badge">
+                            <span class="icon-inline" set:html={getIconSvg('tag', 11)}></span>
+                            <span>{stop.category || 'Wishlist'}</span>
+                          </span>
+                        </div>
+                        <div class="stop-meta">
+                          <span>
+                            <span class="icon-inline" set:html={getIconSvg('map-pin', 12)}></span>
+                            <span>{stop.formatted_address}</span>
+                          </span>
+                        </div>
+                      </div>
+                      <div style="display: flex; gap: 0.35rem;">
+                        <button
+                          class="btn btn-primary btn-sm"
+                          onclick={`event.stopPropagation(); handleScheduleWishlistStop('${stop.id}', '${stop.place_name.replace(/'/g, "\\'")}', 1, 'morning')`}
+                        >
+                          <span class="icon-inline" set:html={getIconSvg('calendar', 12)}></span>
+                          <span>Schedule to Day 1</span>
+                        </button>
+                        <button
+                          class="btn btn-outline btn-sm delete-btn"
+                          onclick={`event.stopPropagation(); handleDeleteStop('${stop.id}', '${stop.place_name.replace(/'/g, "\\'")}', null)`}
+                        >
+                          <span class="icon-inline" set:html={getIconSvg('x', 13)}></span>
+                        </button>
                       </div>
                     </div>
-                    <div style="display: flex; gap: 0.35rem;">
-                      <button
-                        class="btn btn-primary btn-sm"
-                        onclick={`event.stopPropagation(); handleScheduleWishlistStop('${stop.id}', '${stop.place_name.replace(/'/g, "\\'")}', 1, 'morning')`}
-                      >
-                        <span class="icon-inline" set:html={getIconSvg('calendar', 12)}></span>
-                        <span>Schedule to Day 1</span>
-                      </button>
-                      <button
-                        class="btn btn-outline btn-sm"
-                        style="color: #ef4444;"
-                        onclick={`event.stopPropagation(); handleDeleteStop('${stop.id}', '${stop.place_name.replace(/'/g, "\\'")}', null)`}
-                      >
-                        <span class="icon-inline" set:html={getIconSvg('x', 13)}></span>
-                      </button>
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
@@ -1387,7 +2290,7 @@ const initialClientData = {
           <!-- TAB 3: RESERVATIONS / BOOKINGS -->
           <div id="tab-reservations" class="tab-panel" style={normalizedActiveTab === 'reservations' ? 'display: block;' : 'display: none;'}>
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-              <h3>Flights & Lodging Bookings</h3>
+              <h3 style="font-size: 0.95rem; font-weight: 700;">Flights &amp; Lodging Bookings</h3>
               <button class="btn btn-primary btn-sm" onclick="toggleAddReservationPanel()">
                 <span class="icon-inline" set:html={getIconSvg('plus', 13)}></span>
                 <span>Add Booking</span>
@@ -1419,39 +2322,196 @@ const initialClientData = {
               </form>
             </div>
 
-            <div style="display: flex; flex-direction: column; gap: 0.75rem;">
-              {reservations.map((res) => (
-                <div class="stop-card">
-                  <span
-                    class="icon-inline"
-                    style="color: var(--primary); margin-top: 0.15rem;"
-                    set:html={getIconSvg(res.type === 'flight' ? 'plane' : res.type === 'lodging' ? 'hotel' : res.type === 'train' ? 'train' : 'ticket', 20)}
-                  ></span>
-                  <div class="stop-info">
-                    <div class="stop-name">{res.title}</div>
-                    <div class="stop-meta">
-                      {res.confirmation_code && <span class="badge badge-blue">Conf: {res.confirmation_code}</span>}
-                      {res.provider && <span>Provider: {res.provider}</span>}
-                      <span>Cost: {res.currency} {res.cost}</span>
+            <div style="display: flex; flex-direction: column; gap: 0.85rem;">
+              {reservations.map((res) => {
+                const resThumb = getPlaceImageUrl(res.title, res.type, activeTrip?.destination);
+                return (
+                  <div class="stop-card booking-ticket-card" id={`res-${res.id}`}>
+                    <img class="stop-thumb booking-thumb" src={resThumb} alt={res.title} loading="lazy" />
+                    <div class="booking-ticket-stub">
+                      <span
+                        class="icon-inline booking-type-icon"
+                        set:html={getIconSvg(res.type === 'flight' ? 'plane' : res.type === 'lodging' ? 'hotel' : res.type === 'train' ? 'train' : 'ticket', 22)}
+                      ></span>
+                      <span class="booking-type-badge">{res.type}</span>
                     </div>
-                    {res.notes && <div class="stop-notes">{res.notes}</div>}
+                    <div class="stop-info booking-ticket-body">
+                      <div class="stop-name">{res.title}</div>
+                      <div class="stop-meta">
+                        {res.confirmation_code && (
+                          <span class="badge badge-blue">
+                            <span class="icon-inline" set:html={getIconSvg('ticket', 11)}></span>
+                            <span>Conf: <strong>{res.confirmation_code}</strong></span>
+                          </span>
+                        )}
+                        {res.provider && (
+                          <span>
+                            <span class="icon-inline" set:html={getIconSvg('building', 11)}></span>
+                            <span>{res.provider}</span>
+                          </span>
+                        )}
+                        {res.start_time && (
+                          <span>
+                            <span class="icon-inline" set:html={getIconSvg('calendar', 11)}></span>
+                            <span>{new Date(res.start_time).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                          </span>
+                        )}
+                      </div>
+                      {res.notes && <div class="stop-notes">{res.notes}</div>}
+                    </div>
+                    <div class="booking-ticket-cost">
+                      <span class="badge badge-green cost-badge">
+                        {res.currency || activeTrip?.currency || 'USD'} {Number(res.cost || 0).toFixed(2)}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
           <!-- TAB 4: BUDGET & SPLITWISE -->
           <div id="tab-budget" class="tab-panel" style={normalizedActiveTab === 'budget' ? 'display: block;' : 'display: none;'}>
-            <div style="background: #f8fafc; border: 1px solid var(--border); border-radius: 9px; padding: 1rem; margin-bottom: 1.25rem;">
-              <div style="display: flex; justify-content: space-between; font-weight: 700; margin-bottom: 0.4rem; font-size: 0.88rem;">
-                <span>Total Spent: {activeTrip?.currency} {totalExpenses.toFixed(2)}</span>
-                <span>Budget Cap: {activeTrip?.currency} {budgetCap}</span>
+            <!-- Spend vs Budget progress bar -->
+            <div class="budget-overview-card">
+              <div style="display: flex; justify-content: space-between; align-items: baseline; font-weight: 700; margin-bottom: 0.4rem; font-size: 0.88rem;">
+                <div style="display: flex; align-items: baseline; gap: 0.4rem;">
+                  <span style="font-size: 1.15rem; font-weight: 800; color: #0f172a;">{activeTrip?.currency} {totalExpenses.toFixed(2)}</span>
+                  <span style="font-size: 0.78rem; color: var(--text-muted);">spent of {activeTrip?.currency} {budgetCap} cap</span>
+                </div>
+                <span class={`badge ${budgetPercent > 90 ? 'badge-orange' : 'badge-green'}`} style="font-size: 0.75rem;">
+                  {budgetPercent}% used
+                </span>
               </div>
-              <div style="width: 100%; height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden;">
-                <div style={`width: ${budgetPercent}%; height: 100%; background: ${budgetPercent > 90 ? '#ef4444' : '#10b981'};`}></div>
+              <div style="width: 100%; height: 9px; background: #e2e8f0; border-radius: 5px; overflow: hidden;">
+                <div style={`width: ${budgetPercent}%; height: 100%; background: ${budgetPercent > 90 ? '#ef4444' : budgetPercent > 75 ? '#f59e0b' : '#10b981'}; transition: width 0.3s ease;`}></div>
+              </div>
+              <div style="display: flex; justify-content: space-between; margin-top: 0.4rem; font-size: 0.75rem; color: var(--text-muted);">
+                <span>Budget Remaining: <strong>{activeTrip?.currency} {Math.max(0, budgetCap - totalExpenses).toFixed(2)}</strong></span>
+                <span>Currency: <strong>{activeTrip?.currency || 'USD'}</strong></span>
               </div>
             </div>
+
+            <!-- Visual Splitwise Settlement Transfer Cards -->
+            <div class="budget-section-card">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                <div class="section-subheading">
+                  <span class="icon-inline" style="color: var(--primary);" set:html={getIconSvg('users', 15)}></span>
+                  <span style="font-weight: 700; font-size: 0.9rem;">Debt Settlement (Splitwise)</span>
+                </div>
+                <button type="button" class="btn btn-outline btn-sm" onclick="sendPrompt('Who owes whom?')">
+                  <span class="icon-inline" set:html={getIconSvg('users', 12)}></span>
+                  <span>Who Owes Whom?</span>
+                </button>
+              </div>
+
+              {settlement && settlement.settlement_transfers && settlement.settlement_transfers.length > 0 ? (
+                <div class="settlement-transfers-list">
+                  {settlement.settlement_transfers.map((t: any) => (
+                    <div class="settlement-card">
+                      <div class="transfer-flow">
+                        <div class="transfer-actor debtor">
+                          <div class="collab-avatar-sm" style="background: #ef4444;">
+                            {t.from_name ? t.from_name.charAt(0) : 'U'}
+                          </div>
+                          <div class="actor-info">
+                            <span class="actor-name">{t.from_name}</span>
+                            <span class="actor-role">owes</span>
+                          </div>
+                        </div>
+                        <div class="transfer-arrow">
+                          <span class="icon-inline" set:html={getIconSvg('arrow-right-left', 16)}></span>
+                        </div>
+                        <div class="transfer-actor creditor">
+                          <div class="collab-avatar-sm" style="background: #10b981;">
+                            {t.to_name ? t.to_name.charAt(0) : 'U'}
+                          </div>
+                          <div class="actor-info">
+                            <span class="actor-name">{t.to_name}</span>
+                            <span class="actor-role">gets back</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="transfer-amount-wrap">
+                        <span class="transfer-amount-pill">
+                          {t.currency || activeTrip?.currency || 'USD'} {Number(t.amount).toFixed(2)}
+                        </span>
+                        <button
+                          type="button"
+                          class="btn btn-outline btn-sm settle-btn"
+                          onclick={`sendPrompt('Settle up: ${t.from_name} pays ${t.to_name} ${t.currency || activeTrip?.currency || 'USD'} ${Number(t.amount).toFixed(2)}')`}
+                        >
+                          <span class="icon-inline" set:html={getIconSvg('wallet', 12)}></span>
+                          <span>Settle Up</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div class="settled-empty-card">
+                  <span class="icon-inline" style="color: #10b981;" set:html={getIconSvg('check-square', 18)}></span>
+                  <span>All group debts are settled! Everyone is even.</span>
+                </div>
+              )}
+
+              <!-- Collaborator Net Balances -->
+              {settlementBalances.length > 0 && (
+                <div class="collab-balances-section">
+                  <div class="balance-section-title">Collaborator Net Balances</div>
+                  <div class="collaborator-balances-grid">
+                    {settlementBalances.map((b: any) => (
+                      <div class="collab-balance-card">
+                        <div class="collab-balance-header">
+                          <div class="collab-avatar-sm" style="background: var(--primary);">
+                            {b.collaborator_name ? b.collaborator_name.charAt(0) : 'C'}
+                          </div>
+                          <div class="collab-name-wrap">
+                            <div class="collab-name">{b.collaborator_name}</div>
+                            <div class="collab-sub">Paid: {activeTrip?.currency} {b.paid.toFixed(2)} · Share: {activeTrip?.currency} {b.owed.toFixed(2)}</div>
+                          </div>
+                        </div>
+                        <div class={`net-balance-badge ${b.badgeCls}`}>
+                          <span>{b.isPositive ? 'Gets back' : b.isNegative ? 'Owes' : 'Settled'}</span>
+                          <strong>{activeTrip?.currency} {b.netStr}</strong>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <!-- Category spend breakdown bar -->
+            {categorySpending.length > 0 && (
+              <div class="category-breakdown-card">
+                <div class="section-subheading">
+                  <span class="icon-inline" set:html={getIconSvg('bar-chart', 13)}></span>
+                  <span style="font-weight: 700; font-size: 0.88rem;">Spending by Category</span>
+                </div>
+                <div class="category-progress-bar">
+                  {categorySpending.map(({ cat, amt }: any) => {
+                    const pct = Math.max(2, Math.round((amt / (totalExpenses || 1)) * 100));
+                    return (
+                      <div
+                        class={`category-bar-slice slice-${cat}`}
+                        style={`width: ${pct}%;`}
+                        title={`${cat}: ${activeTrip?.currency} ${amt.toFixed(2)} (${pct}%)`}
+                      ></div>
+                    );
+                  })}
+                </div>
+                <div class="category-legend">
+                  {categorySpending.map(({ cat, amt }: any) => (
+                    <span class="legend-pill">
+                      <span class={`legend-dot dot-${cat}`}></span>
+                      <span class="legend-name">{cat}:</span>
+                      <strong>{activeTrip?.currency} {amt.toFixed(2)}</strong>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <!-- Interactive "+ Log Expense" inline bar -->
             <div class="inline-control-card">
@@ -1482,11 +2542,7 @@ const initialClientData = {
             </div>
 
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem;">
-              <h3 style="font-size: 0.95rem;">Expenses & Debt Settlement</h3>
-              <button class="btn btn-outline btn-sm" onclick="sendPrompt('Who owes whom?')">
-                <span class="icon-inline" set:html={getIconSvg('users', 13)}></span>
-                <span>Who Owes Whom?</span>
-              </button>
+              <h3 style="font-size: 0.95rem; font-weight: 700;">Expense History</h3>
             </div>
 
             <div style="display: flex; flex-direction: column; gap: 0.65rem;">
@@ -1496,11 +2552,17 @@ const initialClientData = {
                   <div class="stop-info">
                     <div class="stop-name" style="justify-content: space-between;">
                       <span>{exp.title}</span>
-                      <span style="font-size: 0.9rem; color: #16a34a; font-weight: 700;">{exp.currency} {exp.amount}</span>
+                      <span style="font-size: 0.9rem; color: #16a34a; font-weight: 700;">{exp.currency} {Number(exp.amount).toFixed(2)}</span>
                     </div>
                     <div class="stop-meta">
                       <span>Paid by: <strong>{exp.payer_name || 'Alice'}</strong></span>
                       <span>Date: {exp.date}</span>
+                      {exp.category && (
+                        <span class="category-badge">
+                          <span class="icon-inline" set:html={getIconSvg('tag', 11)}></span>
+                          <span>{exp.category}</span>
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1549,10 +2611,13 @@ const initialClientData = {
         </div>
       </section>
 
-      <!-- 3. RIGHT PANE: Interactive Leaflet Map -->
+      <!-- 3. RIGHT PANE: Interactive Retina Leaflet Map -->
       <section class="pane-map">
         <div class="map-overlay-controls">
-          <span>Filter:</span>
+          <span class="overlay-filter-label">
+            <span class="icon-inline" set:html={getIconSvg('map-pin', 13)}></span>
+            <span>Filter:</span>
+          </span>
           <select id="mapDayFilter" onchange="handleDayFilterChange(this.value)">
             <option value="all">All Days</option>
             {days.map((d) => (
@@ -1610,7 +2675,7 @@ const initialClientData = {
         }
       }
 
-      // Initialize Leaflet Map
+      // Initialize Retina CartoDB Voyager Map
       function initMap() {
         if (typeof L === 'undefined') return;
         let center = [35.0116, 135.7681];
@@ -1630,9 +2695,12 @@ const initialClientData = {
         mapInstance = L.map('map', { zoomControl: false }).setView(center, 13);
         L.control.zoom({ position: 'bottomright' }).addTo(mapInstance);
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          maxZoom: 19,
-          attribution: '&copy; OpenStreetMap contributors',
+        // Retina CartoDB Voyager Tile Layer
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+          subdomains: 'abcd',
+          detectRetina: true,
+          maxZoom: 20,
+          attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
         }).addTo(mapInstance);
 
         const initialDay = clientState.session?.active_day_number !== null && clientState.session?.active_day_number !== undefined
@@ -1646,7 +2714,7 @@ const initialClientData = {
         }
       }
 
-      function renderMapPins(dayFilter = 'all') {
+      function renderMapPins(dayFilter = 'all', isHydration = false) {
         if (!mapInstance) return;
         markerMap.forEach((m) => mapInstance.removeLayer(m));
         markerMap.clear();
@@ -1656,8 +2724,9 @@ const initialClientData = {
         const bounds = L.latLngBounds();
         let pinCount = 0;
         const stopsByDay = {};
+        const dayCounters = {};
 
-        (clientState.stops || []).forEach((stop, idx) => {
+        (clientState.stops || []).forEach((stop) => {
           if (!stop.lat || !stop.lng) return;
 
           const stopDay = (clientState.days || []).find((d) => d.id === stop.day_id);
@@ -1667,35 +2736,62 @@ const initialClientData = {
             return;
           }
 
+          // Number pins sequentially 1..N per-day matching stop card numbers
+          let pinLabel = '';
+          if (dayNum) {
+            dayCounters[dayNum] = (dayCounters[dayNum] || 0) + 1;
+            pinLabel = String(dayCounters[dayNum]);
+          } else {
+            pinLabel = '•';
+          }
+
           const color = dayNum ? DAY_COLORS[(dayNum - 1) % DAY_COLORS.length] : '#64748b';
-          const iconHtml = `<div style="
+
+          // Custom teardrop pin with day accent, white border, and drop shadow
+          const iconHtml = `<div class="map-retina-pin" style="
             background: ${color};
             color: #ffffff;
-            width: 26px;
-            height: 26px;
-            border-radius: 50%;
+            width: 28px;
+            height: 28px;
+            border-radius: 50% 50% 50% 0;
+            transform: rotate(-45deg);
             display: flex;
             align-items: center;
             justify-content: center;
-            font-weight: 700;
-            font-size: 11px;
             border: 2px solid #ffffff;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-          ">${idx + 1}</div>`;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+          ">
+            <span style="transform: rotate(45deg); font-weight: 800; font-size: 11px; font-family: 'Plus Jakarta Sans', system-ui, sans-serif;">
+              ${pinLabel}
+            </span>
+          </div>`;
 
           const customIcon = L.divIcon({
             html: iconHtml,
-            className: '',
-            iconSize: [26, 26],
-            iconAnchor: [13, 13],
+            className: 'custom-map-pin',
+            iconSize: [28, 28],
+            iconAnchor: [14, 28],
+            popupAnchor: [0, -28],
           });
 
           const marker = L.marker([stop.lat, stop.lng], { icon: customIcon }).addTo(mapInstance);
+
+          // Rich Photo Popup on marker click
+          const photoHtml = stop.thumbnail_url
+            ? `<img src="${stop.thumbnail_url}" style="width: 100%; height: 95px; object-fit: cover; border-radius: 8px; margin-bottom: 6px;" alt="${stop.place_name}" />`
+            : '';
+
           marker.bindPopup(`
-            <div style="font-family: system-ui; font-size: 12px;">
-              <strong>${stop.place_name}</strong><br/>
-              ${dayNum ? `Day ${dayNum} (${stop.section_type || ''})` : 'Wishlist'}<br/>
-              ${stop.formatted_address || ''}
+            <div style="font-family: 'Plus Jakarta Sans', system-ui, sans-serif; min-width: 190px; max-width: 230px; padding: 2px;">
+              ${photoHtml}
+              <div style="font-weight: 700; font-size: 13px; color: #0f172a; margin-bottom: 2px;">${stop.place_name}</div>
+              <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size: 11px;">
+                <span style="background: #f1f5f9; color: #475569; padding: 1px 5px; border-radius: 4px; font-weight: 600; text-transform: capitalize;">${stop.category || 'Spot'}</span>
+                ${stop.rating ? `<span style="color: #f59e0b; font-weight: 700;">★ ${stop.rating}</span>` : ''}
+              </div>
+              <div style="font-size: 11px; color: #64748b; line-height: 1.3;">${dayNum ? `Day ${dayNum} (${stop.section_type || ''})` : 'Wishlist'}</div>
+              ${stop.formatted_address ? `<div style="font-size: 10.5px; color: #94a3b8; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${stop.formatted_address}</div>` : ''}
             </div>
           `);
 
@@ -1713,22 +2809,41 @@ const initialClientData = {
           }
         });
 
+        // Dual-stroke route polylines: white casing (weight: 6) + colored route line (weight: 3.5)
         Object.keys(stopsByDay).forEach((dNum) => {
           const coords = stopsByDay[dNum];
           if (coords.length > 1) {
             const color = DAY_COLORS[(parseInt(dNum, 10) - 1) % DAY_COLORS.length];
+
+            // 1. White casing stroke
+            const casing = L.polyline(coords, {
+              color: '#ffffff',
+              weight: 6,
+              opacity: 0.9,
+              lineCap: 'round',
+              lineJoin: 'round',
+            }).addTo(mapInstance);
+            polylines.push(casing);
+
+            // 2. Colored route line
             const line = L.polyline(coords, {
               color,
-              weight: 3,
-              opacity: 0.8,
+              weight: 3.5,
+              opacity: 0.85,
               dashArray: '6, 6',
+              lineCap: 'round',
+              lineJoin: 'round',
             }).addTo(mapInstance);
             polylines.push(line);
           }
         });
 
         if (pinCount > 0) {
-          mapInstance.fitBounds(bounds, { padding: [40, 40] });
+          if (isHydration) {
+            mapInstance.flyToBounds(bounds, { padding: [45, 45], duration: 0.7 });
+          } else {
+            mapInstance.fitBounds(bounds, { padding: [40, 40] });
+          }
         }
       }
 
@@ -1740,6 +2855,82 @@ const initialClientData = {
       function unhighlightMapMarker(stopId) {
         const marker = markerMap.get(stopId);
         if (marker) marker.closePopup();
+      }
+
+      // Zero-Reload Reactive DOM Hydration
+      async function refreshWorkspaceDom(targetTripId) {
+        try {
+          const currentUrl = new URL(window.location.href);
+          if (targetTripId && targetTripId !== clientState.activeTrip?.id) {
+            currentUrl.searchParams.set('trip_id', targetTripId);
+            window.history.pushState(null, '', currentUrl.toString());
+          }
+
+          const res = await fetch(currentUrl.toString());
+          if (!res.ok) return;
+          const htmlText = await res.text();
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(htmlText, 'text/html');
+
+          // 1. Update tp-initial-data & clientState
+          const newRawData = doc.getElementById('tp-initial-data');
+          if (newRawData) {
+            const rawEl = document.getElementById('tp-initial-data');
+            if (rawEl) rawEl.textContent = newRawData.textContent;
+            const parsed = JSON.parse(newRawData.textContent || '{}');
+            Object.assign(clientState, parsed);
+            if (parsed.session?.state_version) {
+              currentVersion = parsed.session.state_version;
+            }
+          }
+
+          // 2. Swap .canvas-content without reloading
+          const newContent = doc.querySelector('.canvas-content');
+          const curContent = document.querySelector('.canvas-content');
+          if (newContent && curContent) {
+            curContent.innerHTML = newContent.innerHTML;
+          }
+
+          // 3. Swap .canvas-tabs (preserving active tab class)
+          const newTabs = doc.querySelector('.canvas-tabs');
+          const curTabs = document.querySelector('.canvas-tabs');
+          if (newTabs && curTabs) {
+            const currentActiveTab = clientState.session?.active_tab || 'itinerary';
+            curTabs.innerHTML = newTabs.innerHTML;
+            curTabs.querySelectorAll('.canvas-tab').forEach((t) => {
+              if (t.getAttribute('data-tab') === currentActiveTab) {
+                t.classList.add('active');
+              } else {
+                t.classList.remove('active');
+              }
+            });
+          }
+
+          // 4. Update .header-left metadata
+          const newHeaderLeft = doc.querySelector('.header-left');
+          const curHeaderLeft = document.querySelector('.header-left');
+          if (newHeaderLeft && curHeaderLeft) {
+            curHeaderLeft.innerHTML = newHeaderLeft.innerHTML;
+          }
+
+          // 5. Update session status bar
+          if (clientState.session) {
+            updateSessionBarUi(clientState.session);
+          }
+
+          // 6. Re-render map pins & fly to bounds smoothly
+          const currentDayFilter = clientState.session?.active_day_number !== null && clientState.session?.active_day_number !== undefined
+            ? String(clientState.session.active_day_number)
+            : 'all';
+          renderMapPins(currentDayFilter, true);
+
+          // 7. Re-select active stop
+          if (clientState.session?.selected_stop_id) {
+            selectStop(clientState.session.selected_stop_id, clientState.session.selected_stop_name || '', false);
+          }
+        } catch (err) {
+          console.error('DOM Hydration error:', err);
+        }
       }
 
       // 1. Session Persistence Helper: writes immediately to /api/v1/session
@@ -1858,12 +3049,41 @@ const initialClientData = {
         const dayBadge = document.getElementById('sessionDayBadge');
         if (dayBadge) dayBadge.innerText = dayNum ? `Day ${dayNum}` : 'All Days';
 
+        // Update day-pill visual active state
+        document.querySelectorAll('.day-pill').forEach((pill) => {
+          pill.classList.remove('active');
+        });
+        const activePill = dayVal === 'all'
+          ? document.querySelector('.day-pill:first-child')
+          : document.querySelectorAll('.day-pill')[dayNum];
+        if (activePill) activePill.classList.add('active');
+
         saveUiState('activeDay', dayNum);
         persistSession({
           active_day_number: dayNum,
           actor: 'ui',
           event_summary: dayNum ? `Filtered UI to Day ${dayNum}` : 'Showing All Days',
         });
+      }
+
+      // Sticky Day Pill Select handler
+      function handleDayPillSelect(dayNum, btn) {
+        document.querySelectorAll('.day-pill').forEach((p) => p.classList.remove('active'));
+        if (btn) btn.classList.add('active');
+        const dayVal = dayNum === 'all' ? 'all' : String(dayNum);
+        const filterSelect = document.getElementById('mapDayFilter');
+        if (filterSelect) filterSelect.value = dayVal;
+        handleDayFilterChange(dayVal);
+
+        if (dayNum !== 'all') {
+          const targetCard = document.getElementById(`day-card-${dayNum}`);
+          if (targetCard) {
+            targetCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        } else {
+          const canvas = document.querySelector('.pane-canvas');
+          if (canvas) canvas.scrollTo({ top: 0, behavior: 'smooth' });
+        }
       }
 
       // 5. Trip Change: persists to /api/v1/session then updates URL
@@ -1911,7 +3131,7 @@ const initialClientData = {
               selected_stop_id: newStop.id,
               actor: 'ui',
             });
-            setTimeout(() => window.location.reload(), 400);
+            setTimeout(() => refreshWorkspaceDom(), 300);
           } else {
             await submitChatMessage(`Add ${placeName} to ${dayVal === 'wishlist' ? 'wishlist' : 'Day ' + dayVal + ' ' + secType + (time ? ' at ' + time : '')}`);
           }
@@ -1949,7 +3169,7 @@ const initialClientData = {
               event_summary: `Added "${placeName}" to Wishlist`,
               actor: 'ui',
             });
-            setTimeout(() => window.location.reload(), 400);
+            setTimeout(() => refreshWorkspaceDom(), 300);
           } else {
             await submitChatMessage(`Add ${placeName} to wishlist`);
           }
@@ -1981,7 +3201,7 @@ const initialClientData = {
               active_day_number: dayNumber,
               actor: 'ui',
             });
-            setTimeout(() => window.location.reload(), 400);
+            setTimeout(() => refreshWorkspaceDom(), 300);
           } else {
             await submitChatMessage(`Optimize Day ${dayNumber} route`);
           }
@@ -2006,7 +3226,7 @@ const initialClientData = {
               selected_stop_id: null,
               actor: 'ui',
             });
-            setTimeout(() => window.location.reload(), 400);
+            setTimeout(() => refreshWorkspaceDom(), 300);
           } else {
             await submitChatMessage(`Remove ${stopName}`);
           }
@@ -2021,6 +3241,7 @@ const initialClientData = {
         if (!tripId || !stopId) return;
 
         try {
+          const isWishlist = targetDayNumber === 'wishlist';
           const res = await fetch('/api/v1/mcp', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2033,26 +3254,26 @@ const initialClientData = {
                 arguments: {
                   trip_id: tripId,
                   stop_id: stopId,
-                  target_day_number: targetDayNumber,
-                  target_section_type: targetSectionType,
+                  target_day_number: isWishlist ? undefined : parseInt(targetDayNumber, 10),
+                  target_section_type: isWishlist ? 'wishlist' : targetSectionType,
                 },
               },
             }),
           });
           if (res.ok) {
-            showToast(`Moved "${stopName}" to Day ${targetDayNumber} (${targetSectionType})`);
+            showToast(`Moved "${stopName}" to ${isWishlist ? 'Wishlist' : 'Day ' + targetDayNumber + ' (' + targetSectionType + ')'}`);
             await persistSession({
-              event_summary: `Moved "${stopName}" to Day ${targetDayNumber} (${targetSectionType})`,
+              event_summary: `Moved "${stopName}" to ${isWishlist ? 'Wishlist' : 'Day ' + targetDayNumber + ' (' + targetSectionType + ')'}`,
               selected_stop_id: stopId,
-              active_day_number: targetDayNumber,
+              active_day_number: isWishlist ? null : parseInt(targetDayNumber, 10),
               actor: 'ui',
             });
-            setTimeout(() => window.location.reload(), 400);
+            setTimeout(() => refreshWorkspaceDom(), 300);
           } else {
-            await submitChatMessage(`Move ${stopName} to Day ${targetDayNumber} ${targetSectionType}`);
+            await submitChatMessage(`Move ${stopName} to ${isWishlist ? 'wishlist' : 'Day ' + targetDayNumber + ' ' + targetSectionType}`);
           }
         } catch {
-          await submitChatMessage(`Move ${stopName} to Day ${targetDayNumber} ${targetSectionType}`);
+          await submitChatMessage(`Move ${stopName} to ${targetDayNumber}`);
         }
       }
 
@@ -2090,7 +3311,7 @@ const initialClientData = {
               active_tab: 'budget',
               actor: 'ui',
             });
-            setTimeout(() => window.location.reload(), 400);
+            setTimeout(() => refreshWorkspaceDom(), 300);
           } else {
             await submitChatMessage(`Split $${amount} for ${title}`);
           }
@@ -2146,7 +3367,7 @@ const initialClientData = {
               active_tab: 'reservations',
               actor: 'ui',
             });
-            setTimeout(() => window.location.reload(), 400);
+            setTimeout(() => refreshWorkspaceDom(), 300);
           } else {
             await submitChatMessage(`Add ${type} reservation at ${title} for $${cost || 150}${confirmationCode ? ' confirmation ' + confirmationCode : ''}`);
           }
@@ -2264,7 +3485,7 @@ const initialClientData = {
               active_tab: 'checklists',
               actor: 'ui',
             });
-            setTimeout(() => window.location.reload(), 400);
+            setTimeout(() => refreshWorkspaceDom(), 300);
           } else {
             await submitChatMessage(`Add ${itemTitle} to ${chkTitle}`);
           }
@@ -2346,15 +3567,15 @@ const initialClientData = {
 
           if (data.trip_id && (!clientState.activeTrip || clientState.activeTrip.id !== data.trip_id)) {
             setTimeout(() => {
-              window.location.search = `?trip_id=${data.trip_id}`;
-            }, 800);
+              refreshWorkspaceDom(data.trip_id);
+            }, 600);
             return;
           }
 
           if (data.actions_taken && data.actions_taken.length > 0) {
             setTimeout(() => {
-              window.location.reload();
-            }, 900);
+              refreshWorkspaceDom();
+            }, 600);
           }
         } catch (err) {
           container.removeChild(loadingDiv);
@@ -2436,13 +3657,11 @@ const initialClientData = {
             showToast(`Live Update from AGY: ${summary}`);
             updateSessionBarUi({ state_version: currentVersion, last_event_summary: summary });
             const urlTripId = new URLSearchParams(window.location.search).get('trip_id');
-            setTimeout(() => {
-              if (targetTripId && (targetTripId !== clientState.activeTrip?.id || urlTripId !== targetTripId)) {
-                window.location.href = '/?trip_id=' + encodeURIComponent(targetTripId);
-              } else {
-                window.location.reload();
-              }
-            }, 600);
+            if (targetTripId && (targetTripId !== clientState.activeTrip?.id || urlTripId !== targetTripId)) {
+              refreshWorkspaceDom(targetTripId);
+            } else {
+              refreshWorkspaceDom();
+            }
           }
         } catch {
           // Silent catch for background poll
@@ -2491,6 +3710,8 @@ const initialClientData = {
       window.toggleNewTripPanel = toggleNewTripPanel;
       window.handleCreateNewTrip = handleCreateNewTrip;
       window.toggleAddReservationPanel = toggleAddReservationPanel;
+      window.handleDayPillSelect = handleDayPillSelect;
+      window.refreshWorkspaceDom = refreshWorkspaceDom;
 
       // Mount on DOM ready
       document.addEventListener('DOMContentLoaded', () => {
