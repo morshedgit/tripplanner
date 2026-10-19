@@ -1389,10 +1389,17 @@ const initialClientData = {
       // Initialize Leaflet Map
       function initMap() {
         let center = [35.0116, 135.7681];
-        if (clientState.activeTrip?.destination?.toLowerCase().includes('paris')) {
+        const destLower = (clientState.activeTrip?.destination || '').toLowerCase();
+        if (destLower.includes('paris')) {
           center = [48.8566, 2.3522];
-        } else if (clientState.activeTrip?.destination?.toLowerCase().includes('tokyo')) {
+        } else if (destLower.includes('tokyo')) {
           center = [35.6762, 139.6503];
+        } else if (destLower.includes('rome') || destLower.includes('italy')) {
+          center = [41.9028, 12.4964];
+        } else if (destLower.includes('florence') || destLower.includes('tuscany')) {
+          center = [43.7696, 11.2558];
+        } else if (destLower.includes('venice')) {
+          center = [45.4408, 12.3155];
         }
 
         mapInstance = L.map('map', { zoomControl: false }).setView(center, 13);
@@ -1977,22 +1984,39 @@ const initialClientData = {
         try {
           let updated = false;
           let summary = '';
+          let targetTripId = null;
 
           // 1. Check /api/v1/events?since_version=N
           const evRes = await fetch(`/api/v1/events?since_version=${currentVersion}`);
           if (evRes.ok) {
             const evData = await evRes.json();
             const events = evData.events || [];
-            if (events.length > 0) {
-              const latest = events[events.length - 1];
-              if (latest.state_version > currentVersion) {
-                currentVersion = latest.state_version;
-                summary = latest.summary || 'AGY workspace update';
-                updated = true;
+            const newestEvent = events[0] || null;
+            const oldestEvent = events[events.length - 1] || null;
+            const bestEvent =
+              newestEvent && oldestEvent
+                ? (newestEvent.state_version >= oldestEvent.state_version ? newestEvent : oldestEvent)
+                : newestEvent;
+
+            const candidateVersion = Math.max(
+              evData.current_version || 0,
+              evData.latest_version || 0,
+              bestEvent?.state_version || 0
+            );
+
+            if (candidateVersion > currentVersion) {
+              currentVersion = candidateVersion;
+              summary =
+                bestEvent?.summary ||
+                evData.session?.last_event_summary ||
+                evData.last_event_summary ||
+                'AGY workspace update';
+              targetTripId = evData.session?.active_trip_id || bestEvent?.trip_id || null;
+              if (evData.session) {
+                if (evData.session.active_tab) saveUiState('activeTab', evData.session.active_tab);
+                if (evData.session.active_day_number !== undefined) saveUiState('activeDay', evData.session.active_day_number);
+                if (evData.session.selected_stop_id !== undefined) saveUiState('selectedStopId', evData.session.selected_stop_id);
               }
-            } else if (evData.latest_version && evData.latest_version > currentVersion) {
-              currentVersion = evData.latest_version;
-              summary = evData.last_event_summary || 'AGY workspace update';
               updated = true;
             }
           } else {
@@ -2004,6 +2028,7 @@ const initialClientData = {
               if (sess.state_version && sess.state_version > currentVersion) {
                 currentVersion = sess.state_version;
                 summary = sess.last_event_summary || 'AGY workspace update';
+                targetTripId = sess.active_trip_id || null;
                 if (sess.active_tab) saveUiState('activeTab', sess.active_tab);
                 if (sess.active_day_number !== undefined) saveUiState('activeDay', sess.active_day_number);
                 if (sess.selected_stop_id !== undefined) saveUiState('selectedStopId', sess.selected_stop_id);
@@ -2015,8 +2040,13 @@ const initialClientData = {
           if (updated) {
             showToast(`⚡ Live Update from AGY: ${summary}`);
             updateSessionBarUi({ state_version: currentVersion, last_event_summary: summary });
+            const urlTripId = new URLSearchParams(window.location.search).get('trip_id');
             setTimeout(() => {
-              window.location.reload();
+              if (targetTripId && (targetTripId !== clientState.activeTrip?.id || urlTripId !== targetTripId)) {
+                window.location.href = '/?trip_id=' + encodeURIComponent(targetTripId);
+              } else {
+                window.location.reload();
+              }
             }, 600);
           }
         } catch {
@@ -2053,11 +2083,11 @@ const initialClientData = {
       document.addEventListener('DOMContentLoaded', () => {
         initMap();
 
-        // Restore tab from localStorage if present
-        const savedTab = loadUiState('activeTab');
-        if (savedTab && savedTab !== clientState.session?.active_tab) {
-          const tabBtn = document.querySelector(`.canvas-tab[onclick*="${savedTab}"]`);
-          if (tabBtn) handleTabClick(savedTab, tabBtn);
+        // Sync localStorage from server session state (do not overwrite AGY session state from stale localStorage)
+        if (clientState.session) {
+          if (clientState.session.active_tab) saveUiState('activeTab', clientState.session.active_tab);
+          if (clientState.session.active_day_number !== undefined) saveUiState('activeDay', clientState.session.active_day_number);
+          if (clientState.session.selected_stop_id !== undefined) saveUiState('selectedStopId', clientState.session.selected_stop_id);
         }
       });
     </script>

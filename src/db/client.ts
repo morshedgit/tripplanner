@@ -64,17 +64,18 @@ export class D1Adapter implements DatabaseAdapter {
   }
 
   async exec(sql: string): Promise<void> {
-    if (typeof this.d1.exec === 'function') {
-      await this.d1.exec(sql);
-    } else {
-      const statements = sql
-        .split(';')
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
-      for (const statement of statements) {
-        await this.d1.prepare(statement).run();
-      }
+    const cleaned = sql.replace(/--.*$/gm, '');
+    const statements = cleaned
+      .split(';')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    for (const statement of statements) {
+      await this.d1.prepare(statement).run();
     }
+  }
+
+  getRawD1(): any {
+    return this.d1;
   }
 }
 
@@ -208,6 +209,35 @@ export function getSchemaSql(): string {
 let _localDb: DatabaseAdapter | null = null;
 let _testDb: DatabaseAdapter | null = null;
 const _memoryKv = new MemoryKvAdapter();
+const _initializedD1 = new WeakSet<object>();
+
+/**
+ * Ensures a Cloudflare D1 database instance has the TripPlanner schema
+ * applied and default seed trip populated on first access.
+ */
+export async function ensureD1Initialized(adapter: D1Adapter): Promise<void> {
+  const rawD1 = adapter.getRawD1();
+  if (rawD1 && typeof rawD1 === 'object' && _initializedD1.has(rawD1)) {
+    return;
+  }
+
+  const tableRow = await adapter.queryOne<{ name: string }>(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='trips'"
+  );
+  if (!tableRow) {
+    await adapter.exec(getSchemaSql());
+  }
+
+  const countRow = await adapter.queryOne<{ count: number }>('SELECT COUNT(*) as count FROM trips');
+  if (!countRow || Number(countRow.count) === 0) {
+    const { seedDefaultTrip } = await import('./seed');
+    await seedDefaultTrip(adapter);
+  }
+
+  if (rawD1 && typeof rawD1 === 'object') {
+    _initializedD1.add(rawD1);
+  }
+}
 
 /**
  * Sets the active test database instance. Pass null to reset.
@@ -250,12 +280,16 @@ export async function getDb(localsOrEnv?: any): Promise<DatabaseAdapter> {
   // 1. Detect Cloudflare D1 on Astro locals / runtime / env
   const d1 = localsOrEnv?.runtime?.env?.DB ?? localsOrEnv?.DB;
   if (d1 && typeof d1.prepare === 'function') {
-    return new D1Adapter(d1);
+    const adapter = new D1Adapter(d1);
+    await ensureD1Initialized(adapter);
+    return adapter;
   }
 
   // 2. Direct D1 instance
   if (localsOrEnv && typeof localsOrEnv.prepare === 'function' && typeof localsOrEnv.batch === 'function') {
-    return new D1Adapter(localsOrEnv);
+    const adapter = new D1Adapter(localsOrEnv);
+    await ensureD1Initialized(adapter);
+    return adapter;
   }
 
   // 3. Isolated test database
