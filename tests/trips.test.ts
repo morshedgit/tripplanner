@@ -380,7 +380,7 @@ describe('Astro REST API Endpoints Integration Tests', () => {
     } as any);
 
     expect(res.status).toBe(200);
-    const data = await res.json();
+    const data: any = await res.json();
     expect(Array.isArray(data)).toBe(true);
     expect(data.length).toBeGreaterThanOrEqual(1);
     expect(data[0].id).toBe('trip-kyoto-2026');
@@ -401,7 +401,7 @@ describe('Astro REST API Endpoints Integration Tests', () => {
     } as any);
 
     expect(invalidRes.status).toBe(400);
-    const errorBody = await invalidRes.json();
+    const errorBody: any = await invalidRes.json();
     expect(errorBody.code).toBe('VALIDATION_ERROR');
     expect(errorBody.errors).toBeDefined();
 
@@ -428,7 +428,7 @@ describe('Astro REST API Endpoints Integration Tests', () => {
     } as any);
 
     expect(validRes.status).toBe(201);
-    const createdTrip = await validRes.json();
+    const createdTrip: any = await validRes.json();
     expect(createdTrip.title).toBe('Iceland Ring Road Odyssey');
     expect(createdTrip.destination).toBe('Reykjavik, Iceland');
   });
@@ -443,7 +443,7 @@ describe('Astro REST API Endpoints Integration Tests', () => {
     } as any);
 
     expect(res.status).toBe(200);
-    const trip = await res.json();
+    const trip: any = await res.json();
     expect(trip.id).toBe('trip-kyoto-2026');
     expect(trip.days.length).toBe(5);
 
@@ -471,7 +471,7 @@ describe('Astro REST API Endpoints Integration Tests', () => {
       params: { tripId: 'trip-kyoto-2026' },
     } as any);
     expect(patchRes.status).toBe(200);
-    const updated = await patchRes.json();
+    const updated: any = await patchRes.json();
     expect(updated.title).toBe('Kyoto Autumn Photography Trip');
 
     // DELETE
@@ -485,7 +485,7 @@ describe('Astro REST API Endpoints Integration Tests', () => {
       params: { tripId: 'trip-kyoto-2026' },
     } as any);
     expect(deleteRes.status).toBe(200);
-    const deleteBody = await deleteRes.json();
+    const deleteBody: any = await deleteRes.json();
     expect(deleteBody.success).toBe(true);
   });
 
@@ -499,7 +499,7 @@ describe('Astro REST API Endpoints Integration Tests', () => {
     } as any);
 
     expect(res.status).toBe(200);
-    const summary = await res.json();
+    const summary: any = await res.json();
     expect(summary.total_days).toBe(5);
     expect(summary.total_spent).toBeGreaterThan(0);
     expect(summary.days_overview.length).toBe(5);
@@ -515,7 +515,7 @@ describe('Astro REST API Endpoints Integration Tests', () => {
       params: { tripId: 'trip-kyoto-2026', dayNumber: '1' },
     } as any);
     expect(getRes.status).toBe(200);
-    const day = await getRes.json();
+    const day: any = await getRes.json();
     expect(day.day_number).toBe(1);
 
     // PATCH Day 1
@@ -531,7 +531,7 @@ describe('Astro REST API Endpoints Integration Tests', () => {
       params: { tripId: 'trip-kyoto-2026', dayNumber: '1' },
     } as any);
     expect(patchRes.status).toBe(200);
-    const updated = await patchRes.json();
+    const updated: any = await patchRes.json();
     expect(updated.notes).toBe('Early morning hike recommended');
   });
 
@@ -552,7 +552,7 @@ describe('Astro REST API Endpoints Integration Tests', () => {
     } as any);
 
     expect(res.status).toBe(201);
-    const section = await res.json();
+    const section: any = await res.json();
     expect(section.title).toBe('Coffee Shops & Bakeries');
     expect(section.section_type).toBe('wishlist');
   });
@@ -566,7 +566,7 @@ describe('Astro REST API Endpoints Integration Tests', () => {
       params: { tripId: 'trip-kyoto-2026' },
     } as any);
     expect(getRes.status).toBe(200);
-    const initialList = await getRes.json();
+    const initialList: any = await getRes.json();
     expect(initialList.length).toBe(2);
 
     const postReq = new Request('http://localhost/api/v1/trips/trip-kyoto-2026/collaborators', {
@@ -585,7 +585,7 @@ describe('Astro REST API Endpoints Integration Tests', () => {
       params: { tripId: 'trip-kyoto-2026' },
     } as any);
     expect(postRes.status).toBe(201);
-    const created = await postRes.json();
+    const created: any = await postRes.json();
     expect(created.name).toBe('David Miller');
   });
 
@@ -599,7 +599,7 @@ describe('Astro REST API Endpoints Integration Tests', () => {
       params: { tripId: 'trip-kyoto-2026' },
     } as any);
     expect(getRes.status).toBe(200);
-    const checklists = await getRes.json();
+    const checklists: any = await getRes.json();
     expect(checklists.length).toBeGreaterThanOrEqual(2);
 
     // 2. POST checklist item
@@ -618,7 +618,7 @@ describe('Astro REST API Endpoints Integration Tests', () => {
       params: { tripId: 'trip-kyoto-2026' },
     } as any);
     expect(postRes.status).toBe(201);
-    const createdItem = await postRes.json();
+    const createdItem: any = await postRes.json();
     expect(createdItem.title).toBe('Rain Jacket & Umbrella');
 
     // 3. PATCH toggle item
@@ -637,7 +637,7 @@ describe('Astro REST API Endpoints Integration Tests', () => {
       params: { tripId: 'trip-kyoto-2026' },
     } as any);
     expect(patchRes.status).toBe(200);
-    const updatedItem = await patchRes.json();
+    const updatedItem: any = await patchRes.json();
     expect(updatedItem.is_completed).toBe(true);
   });
 
@@ -651,7 +651,7 @@ describe('Astro REST API Endpoints Integration Tests', () => {
       params: { tripId: 'trip-kyoto-2026' },
     } as any);
     expect(getRes.status).toBe(200);
-    const notes = await getRes.json();
+    const notes: any = await getRes.json();
     expect(notes.length).toBeGreaterThanOrEqual(1);
 
     // 2. POST create note
@@ -670,7 +670,7 @@ describe('Astro REST API Endpoints Integration Tests', () => {
       params: { tripId: 'trip-kyoto-2026' },
     } as any);
     expect(postRes.status).toBe(201);
-    const createdNote = await postRes.json();
+    const createdNote: any = await postRes.json();
     expect(createdNote.title).toBe('Luggage Forwarding (Takkyubin) Guide');
 
     // 3. DELETE note
@@ -685,7 +685,7 @@ describe('Astro REST API Endpoints Integration Tests', () => {
       params: { tripId: 'trip-kyoto-2026' },
     } as any);
     expect(deleteRes.status).toBe(200);
-    const deleteBody = await deleteRes.json();
+    const deleteBody: any = await deleteRes.json();
     expect(deleteBody.success).toBe(true);
   });
 });

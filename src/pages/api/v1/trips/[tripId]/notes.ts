@@ -116,7 +116,7 @@ export const DELETE: APIRoute = async ({ params, request, locals, url }) => {
 
     if (!noteId) {
       try {
-        const body = await request.json();
+        const body: any = await request.json();
         noteId = body?.note_id || body?.id;
       } catch {
         // Body was optional if query param was present
