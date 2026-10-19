@@ -324,6 +324,44 @@ describe('getDb & setTestDb Integration', () => {
 
     setTestDb(null);
   });
+
+  it('auto-initializes Cloudflare D1 schema and seeds default trip when trips table does not exist', async () => {
+    const { default: Database } = await import('better-sqlite3');
+    const rawSqlite = new Database(':memory:');
+    rawSqlite.pragma('foreign_keys = ON');
+
+    const createStmtWrapper = (sql: string, boundParams: any[] = []) => ({
+      bind: (...params: any[]) => createStmtWrapper(sql, params),
+      all: async () => ({ results: rawSqlite.prepare(sql).all(...boundParams) }),
+      first: async () => rawSqlite.prepare(sql).get(...boundParams) ?? null,
+      run: async () => {
+        const res = rawSqlite.prepare(sql).run(...boundParams);
+        return { meta: { changes: res.changes, last_row_id: res.lastInsertRowid } };
+      },
+    });
+
+    const mockD1 = {
+      prepare: (sql: string) => createStmtWrapper(sql),
+      batch: async (stmts: any[]) => {
+        for (const s of stmts) {
+          await s.run();
+        }
+      },
+      exec: async () => {
+        throw new Error('D1_EXEC_ERROR: workerd multi-line comment failure');
+      },
+    };
+
+    const d1Adapter = await getDb({ DB: mockD1 });
+    const seededTrip = await d1Adapter.queryOne<Trip>('SELECT * FROM trips WHERE id = ?', [
+      'trip-kyoto-2026',
+    ]);
+    expect(seededTrip).not.toBeNull();
+    expect(seededTrip?.title).toBe('5-Day Kyoto Autumn Expedition');
+
+    const stops = await d1Adapter.query<Stop>('SELECT * FROM stops');
+    expect(stops.length).toBeGreaterThanOrEqual(7);
+  });
 });
 
 describe('KvCacheAdapter', () => {
