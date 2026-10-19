@@ -1,8 +1,139 @@
 ---
 import { getDb } from '../db/client';
+import type {
+  Trip,
+  Day,
+  Section,
+  Place,
+  Stop,
+  TransitLeg,
+  Reservation,
+  Expense,
+  ExpenseSplit,
+  Checklist,
+  ChecklistItem,
+  TripNote,
+  Collaborator,
+} from '../types/domain';
+
+export const prerender = false;
 
 const db = await getDb(Astro.locals);
-const trips = await db.query('SELECT * FROM trips ORDER BY start_date ASC');
+
+// 1. Fetch all trips for switcher
+const trips = await db.query<Trip>('SELECT * FROM trips ORDER BY start_date ASC');
+
+// 2. Determine active trip
+const url = new URL(Astro.request.url);
+const requestedTripId = url.searchParams.get('trip_id');
+let activeTrip = trips.find((t) => t.id === requestedTripId) || trips[0];
+
+let collaborators: Collaborator[] = [];
+let days: Day[] = [];
+let sections: Section[] = [];
+let stops: any[] = [];
+let transitLegs: TransitLeg[] = [];
+let reservations: Reservation[] = [];
+let expenses: any[] = [];
+let checklists: any[] = [];
+let tripNotes: TripNote[] = [];
+
+if (activeTrip) {
+  const tripId = activeTrip.id;
+
+  collaborators = await db.query<Collaborator>(
+    'SELECT * FROM collaborators WHERE trip_id = ? ORDER BY role DESC, name ASC',
+    [tripId]
+  );
+
+  days = await db.query<Day>(
+    'SELECT * FROM days WHERE trip_id = ? ORDER BY day_number ASC',
+    [tripId]
+  );
+
+  sections = await db.query<Section>(
+    'SELECT * FROM sections WHERE trip_id = ? ORDER BY sort_order ASC',
+    [tripId]
+  );
+
+  stops = await db.query<any>(
+    `SELECT s.*, p.name as place_name, p.formatted_address, p.lat, p.lng, p.category, p.rating, p.notes as place_notes,
+            sec.day_id, sec.section_type, sec.title as section_title
+     FROM stops s
+     JOIN places p ON s.place_id = p.id
+     JOIN sections sec ON s.section_id = sec.id
+     WHERE sec.trip_id = ?
+     ORDER BY s.sort_order ASC, s.created_at ASC`,
+    [tripId]
+  );
+
+  transitLegs = await db.query<TransitLeg>(
+    'SELECT * FROM transit_legs WHERE trip_id = ? ORDER BY created_at ASC',
+    [tripId]
+  );
+
+  reservations = await db.query<Reservation>(
+    'SELECT * FROM reservations WHERE trip_id = ? ORDER BY start_time ASC',
+    [tripId]
+  );
+
+  expenses = await db.query<any>(
+    `SELECT e.*, c.name as payer_name
+     FROM expenses e
+     LEFT JOIN collaborators c ON e.paid_by_collaborator_id = c.id
+     WHERE e.trip_id = ?
+     ORDER BY e.date DESC, e.created_at DESC`,
+    [tripId]
+  );
+
+  for (const exp of expenses) {
+    exp.splits = await db.query<any>(
+      `SELECT es.*, c.name as member_name
+       FROM expense_splits es
+       JOIN collaborators c ON es.collaborator_id = c.id
+       WHERE es.expense_id = ?`,
+      [exp.id]
+    );
+  }
+
+  const rawChecklists = await db.query<Checklist>(
+    'SELECT * FROM checklists WHERE trip_id = ? ORDER BY sort_order ASC',
+    [tripId]
+  );
+
+  for (const chk of rawChecklists) {
+    const items = await db.query<ChecklistItem>(
+      'SELECT * FROM checklist_items WHERE checklist_id = ? ORDER BY sort_order ASC',
+      [chk.id]
+    );
+    checklists.push({ ...chk, items });
+  }
+
+  tripNotes = await db.query<TripNote>(
+    'SELECT * FROM trip_notes WHERE trip_id = ? ORDER BY created_at ASC',
+    [tripId]
+  );
+}
+
+// Calculate totals
+const totalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+const budgetCap = activeTrip?.budget_cap || 2500;
+const budgetPercent = Math.min(100, Math.round((totalExpenses / budgetCap) * 100));
+
+// Client-side payload
+const initialClientData = {
+  activeTrip,
+  trips,
+  collaborators,
+  days,
+  sections,
+  stops,
+  transitLegs,
+  reservations,
+  expenses,
+  checklists,
+  tripNotes,
+};
 ---
 
 <!doctype html>
@@ -10,19 +141,1209 @@ const trips = await db.query('SELECT * FROM trips ORDER BY start_date ASC');
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TripPlanner — Collaborative Itinerary Engine</title>
-  </head>
-  <body style="font-family: system-ui, -apple-system, sans-serif; padding: 2rem; max-width: 800px; margin: 0 auto; line-height: 1.6;">
-    <h1>✈️ TripPlanner</h1>
-    <p>Astro + Cloudflare Workers / D1 / KV Foundation is active and running.</p>
+    <title>{activeTrip ? `${activeTrip.title} — TripPlanner` : 'TripPlanner — Collaborative Workspace'}</title>
+    <!-- Leaflet CSS -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --primary: #2563eb;
+        --primary-hover: #1d4ed8;
+        --primary-light: #eff6ff;
+        --accent: #f97316;
+        --accent-light: #fff7ed;
+        --bg-main: #f8fafc;
+        --bg-card: #ffffff;
+        --border: #e2e8f0;
+        --text-primary: #0f172a;
+        --text-secondary: #475569;
+        --text-muted: #94a3b8;
+        --success: #10b981;
+        --warning: #f59e0b;
+        --header-height: 60px;
+      }
 
-    <h2>Active Trips ({trips.length})</h2>
-    <ul>
-      {trips.map((trip: any) => (
-        <li>
-          <strong>{trip.title}</strong> — {trip.destination} ({trip.start_date} to {trip.end_date})
-        </li>
-      ))}
-    </ul>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+        background-color: var(--bg-main);
+        color: var(--text-primary);
+        line-height: 1.5;
+        overflow: hidden;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* ================= TOP NAVBAR ================= */
+      header.app-header {
+        height: var(--header-height);
+        background: #ffffff;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 1.25rem;
+        z-index: 1000;
+        flex-shrink: 0;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+      }
+
+      .header-left {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+      }
+
+      .logo-badge {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-weight: 800;
+        font-size: 1.15rem;
+        color: #1e293b;
+        text-decoration: none;
+      }
+
+      .logo-badge span.icon {
+        font-size: 1.35rem;
+      }
+
+      .trip-select-wrap {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        background: #f1f5f9;
+        border: 1px solid var(--border);
+        padding: 0.35rem 0.75rem;
+        border-radius: 8px;
+      }
+
+      .trip-select-wrap select {
+        background: transparent;
+        border: none;
+        font-weight: 600;
+        font-size: 0.9rem;
+        color: #1e293b;
+        outline: none;
+        cursor: pointer;
+      }
+
+      .trip-meta-badge {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        padding: 0.2rem 0.5rem;
+        border-radius: 6px;
+        font-size: 0.75rem;
+        font-weight: 600;
+      }
+
+      .badge-blue { background: #dbeafe; color: #1e40af; }
+      .badge-green { background: #d1fae5; color: #065f46; }
+      .badge-orange { background: #ffedd5; color: #9a3412; }
+
+      .header-right {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.45rem 0.85rem;
+        border-radius: 7px;
+        font-size: 0.825rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        border: 1px solid transparent;
+        text-decoration: none;
+      }
+
+      .btn-primary { background: var(--primary); color: #ffffff; }
+      .btn-primary:hover { background: var(--primary-hover); }
+      .btn-outline { background: #ffffff; border-color: var(--border); color: var(--text-secondary); }
+      .btn-outline:hover { background: #f8fafc; color: var(--text-primary); }
+      .btn-sm { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
+
+      /* ================= 3-PANE WORKSPACE ================= */
+      .workspace {
+        display: flex;
+        flex: 1;
+        height: calc(100vh - var(--header-height));
+        overflow: hidden;
+      }
+
+      /* ----- LEFT PANE: CHAT ASSISTANT ----- */
+      .pane-chat {
+        width: 360px;
+        flex-shrink: 0;
+        background: #ffffff;
+        border-right: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
+
+      .pane-header {
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: #fafafa;
+      }
+
+      .pane-title {
+        font-weight: 700;
+        font-size: 0.875rem;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        color: #1e293b;
+      }
+
+      .chat-messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.85rem;
+      }
+
+      .chat-bubble {
+        max-width: 90%;
+        padding: 0.65rem 0.85rem;
+        border-radius: 10px;
+        font-size: 0.85rem;
+        line-height: 1.45;
+        word-break: break-word;
+      }
+
+      .chat-bubble-user {
+        align-self: flex-end;
+        background: var(--primary);
+        color: #ffffff;
+        border-bottom-right-radius: 2px;
+      }
+
+      .chat-bubble-assistant {
+        align-self: flex-start;
+        background: #f1f5f9;
+        color: #0f172a;
+        border-bottom-left-radius: 2px;
+        border: 1px solid #e2e8f0;
+      }
+
+      .chat-bubble-assistant p {
+        margin-bottom: 0.4rem;
+      }
+      .chat-bubble-assistant p:last-child {
+        margin-bottom: 0;
+      }
+
+      .tool-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        background: #ede9fe;
+        color: #5b21b6;
+        padding: 0.15rem 0.45rem;
+        border-radius: 4px;
+        font-size: 0.7rem;
+        font-family: 'JetBrains Mono', monospace;
+        margin-bottom: 0.35rem;
+      }
+
+      .chat-quick-chips {
+        padding: 0.5rem 0.75rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        border-top: 1px solid var(--border);
+        background: #fafafa;
+      }
+
+      .chip {
+        background: #ffffff;
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 0.2rem 0.6rem;
+        font-size: 0.725rem;
+        font-weight: 600;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+
+      .chip:hover {
+        background: var(--primary-light);
+        border-color: var(--primary);
+        color: var(--primary);
+      }
+
+      .chat-input-bar {
+        padding: 0.75rem 1rem;
+        border-top: 1px solid var(--border);
+        display: flex;
+        gap: 0.5rem;
+        background: #ffffff;
+      }
+
+      .chat-input-bar input {
+        flex: 1;
+        padding: 0.5rem 0.75rem;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-size: 0.85rem;
+        outline: none;
+      }
+
+      .chat-input-bar input:focus {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+      }
+
+      /* ----- CENTER PANE: DOCUMENT CANVAS ----- */
+      .pane-canvas {
+        flex: 1;
+        overflow-y: auto;
+        background: #ffffff;
+        border-right: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+      }
+
+      .canvas-tabs {
+        display: flex;
+        border-bottom: 1px solid var(--border);
+        background: #f8fafc;
+        padding: 0 1rem;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+      }
+
+      .canvas-tab {
+        padding: 0.75rem 1rem;
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--text-secondary);
+        border-bottom: 2px solid transparent;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        transition: all 0.15s ease;
+      }
+
+      .canvas-tab:hover {
+        color: var(--primary);
+      }
+
+      .canvas-tab.active {
+        color: var(--primary);
+        border-bottom-color: var(--primary);
+        background: #ffffff;
+      }
+
+      .canvas-content {
+        padding: 1.5rem;
+        max-width: 820px;
+        margin: 0 auto;
+        width: 100%;
+      }
+
+      /* Day section & card styles */
+      .day-card {
+        background: #ffffff;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        margin-bottom: 1.5rem;
+        overflow: hidden;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+      }
+
+      .day-header {
+        background: #f8fafc;
+        border-bottom: 1px solid var(--border);
+        padding: 0.75rem 1rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .day-title-wrap {
+        display: flex;
+        align-items: baseline;
+        gap: 0.5rem;
+      }
+
+      .day-num {
+        font-weight: 800;
+        font-size: 1rem;
+        color: #0f172a;
+      }
+
+      .day-date {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+      }
+
+      .day-transit-badge {
+        font-size: 0.75rem;
+        color: #475569;
+        background: #e2e8f0;
+        padding: 0.2rem 0.5rem;
+        border-radius: 6px;
+        font-weight: 500;
+      }
+
+      .section-group {
+        padding: 1rem;
+        border-bottom: 1px solid #f1f5f9;
+      }
+
+      .section-group:last-child {
+        border-bottom: none;
+      }
+
+      .section-title {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        font-weight: 700;
+        color: var(--text-muted);
+        margin-bottom: 0.75rem;
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+      }
+
+      .stop-card {
+        background: #ffffff;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.75rem 1rem;
+        display: flex;
+        align-items: flex-start;
+        gap: 0.85rem;
+        transition: all 0.15s ease;
+        position: relative;
+        cursor: pointer;
+      }
+
+      .stop-card:hover {
+        border-color: #cbd5e1;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+      }
+
+      .stop-card.highlighted {
+        border-color: var(--primary);
+        background: #f0f7ff;
+      }
+
+      .pin-badge {
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        background: var(--primary);
+        color: #ffffff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.75rem;
+        font-weight: 700;
+        flex-shrink: 0;
+      }
+
+      .stop-info {
+        flex: 1;
+      }
+
+      .stop-name {
+        font-weight: 700;
+        font-size: 0.9rem;
+        color: #1e293b;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .stop-meta {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        margin-top: 0.2rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+      }
+
+      .stop-notes {
+        font-size: 0.78rem;
+        color: #64748b;
+        margin-top: 0.4rem;
+        background: #f8fafc;
+        padding: 0.3rem 0.5rem;
+        border-radius: 4px;
+        border-left: 2px solid #cbd5e1;
+      }
+
+      /* Transit connector between stops */
+      .transit-leg {
+        margin: 0.5rem 0 0.5rem 1.6rem;
+        padding: 0.35rem 0.75rem;
+        background: #f8fafc;
+        border-left: 2px dashed #94a3b8;
+        border-radius: 0 6px 6px 0;
+        font-size: 0.75rem;
+        color: #475569;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      /* ----- RIGHT PANE: LEAFLET MAP ----- */
+      .pane-map {
+        width: 440px;
+        flex-shrink: 0;
+        position: relative;
+        background: #e2e8f0;
+      }
+
+      #map {
+        width: 100%;
+        height: 100%;
+      }
+
+      .map-overlay-controls {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 500;
+        background: #ffffff;
+        padding: 0.35rem 0.6rem;
+        border-radius: 6px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.8rem;
+      }
+
+      .map-overlay-controls select {
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 0.2rem 0.4rem;
+        font-size: 0.75rem;
+      }
+
+      /* Responsive toggle */
+      @media (max-width: 1100px) {
+        .pane-map { width: 340px; }
+        .pane-chat { width: 320px; }
+      }
+
+      @media (max-width: 900px) {
+        .workspace { flex-direction: column; }
+        .pane-chat, .pane-map { width: 100%; height: 300px; }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <a href="/" class="logo-badge">
+          <span class="icon">✈️</span>
+          <span>TripPlanner</span>
+        </a>
+
+        {trips.length > 0 && (
+          <div class="trip-select-wrap">
+            <span>🧳</span>
+            <select id="tripSelect" onchange="window.location.search = '?trip_id=' + this.value">
+              {trips.map((t) => (
+                <option value={t.id} selected={t.id === activeTrip?.id}>
+                  {t.title}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {activeTrip && (
+          <div class="trip-meta-badge">
+            <span class="badge badge-blue">📍 {activeTrip.destination}</span>
+            <span class="badge badge-green">📅 {activeTrip.start_date} → {activeTrip.end_date}</span>
+            <span class="badge badge-orange">💵 {activeTrip.currency} {budgetCap} budget</span>
+          </div>
+        )}
+      </div>
+
+      <div class="header-right">
+        <a href="/api/v1/openapi.json" target="_blank" class="btn btn-outline btn-sm">
+          📜 OpenAPI
+        </a>
+        <a href="/.well-known/ai-plugin.json" target="_blank" class="btn btn-outline btn-sm">
+          🔌 Plugin
+        </a>
+        <button class="btn btn-outline btn-sm" onclick="exportData('markdown')">
+          📥 Markdown
+        </button>
+        <button class="btn btn-outline btn-sm" onclick="exportData('ical')">
+          📅 .ics
+        </button>
+        <button class="btn btn-outline btn-sm" onclick="exportData('csv')">
+          📊 CSV
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="promptNewTrip()">
+          + New Trip
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="workspace">
+      <!-- 1. LEFT PANE: Conversational AI Assistant -->
+      <section class="pane-chat">
+        <div class="pane-header">
+          <div class="pane-title">
+            <span>🤖</span>
+            <span>Conversational Agent</span>
+          </div>
+          <span class="badge badge-blue" style="font-size: 0.65rem;">Active</span>
+        </div>
+
+        <div class="chat-messages" id="chatMessages">
+          <div class="chat-bubble chat-bubble-assistant">
+            <p><strong>Hi there! 👋</strong></p>
+            <p>I am your TripPlanner AI Assistant. You can plan trips, add stops, move places, optimize routes, log expenses, and settle debts using plain English.</p>
+          </div>
+        </div>
+
+        <!-- Quick Prompt Chips -->
+        <div class="chat-quick-chips">
+          <button class="chip" onclick="sendPrompt('Summarize our trip')">Summarize trip</button>
+          <button class="chip" onclick="sendPrompt('Add Kinkaku-ji to Day 2 morning at 09:30')">+ Kinkaku-ji (Day 2)</button>
+          <button class="chip" onclick="sendPrompt('Optimize Day 1 route')">⚡ Optimize Day 1</button>
+          <button class="chip" onclick="sendPrompt('Split $400 for hotel paid by Alice between Alice and Bob')">💸 Split $400 Hotel</button>
+          <button class="chip" onclick="sendPrompt('Who owes whom?')">👥 Who owes whom?</button>
+          <button class="chip" onclick="sendPrompt('Add JR Pass to packing list')">📋 Add JR Pass</button>
+        </div>
+
+        <!-- Input Bar -->
+        <form class="chat-input-bar" id="chatForm" onsubmit="handleChatSubmit(event)">
+          <input
+            type="text"
+            id="chatInput"
+            placeholder="Type instructions or ask questions..."
+            autocomplete="off"
+          />
+          <button type="submit" class="btn btn-primary" id="chatSubmitBtn">
+            Send
+          </button>
+        </form>
+      </section>
+
+      <!-- 2. CENTER PANE: Document Canvas -->
+      <section class="pane-canvas">
+        <nav class="canvas-tabs">
+          <button class="canvas-tab active" onclick="switchTab('itinerary', this)">
+            <span>🗺️</span>
+            <span>Itinerary</span>
+          </button>
+          <button class="canvas-tab" onclick="switchTab('wishlist', this)">
+            <span>📌</span>
+            <span>Wishlist ({stops.filter(s => !s.day_id).length})</span>
+          </button>
+          <button class="canvas-tab" onclick="switchTab('reservations', this)">
+            <span>📑</span>
+            <span>Bookings ({reservations.length})</span>
+          </button>
+          <button class="canvas-tab" onclick="switchTab('budget', this)">
+            <span>💰</span>
+            <span>Budget & Splits</span>
+          </button>
+          <button class="canvas-tab" onclick="switchTab('checklists', this)">
+            <span>📋</span>
+            <span>Checklists</span>
+          </button>
+        </nav>
+
+        <div class="canvas-content">
+          <!-- TAB 1: ITINERARY -->
+          <div id="tab-itinerary" class="tab-panel">
+            {days.map((day) => {
+              const dayStops = stops.filter((s) => s.day_id === day.id);
+              const dayLegs = transitLegs.filter((tl) =>
+                dayStops.some((s) => s.id === tl.from_stop_id)
+              );
+              const totalMeters = dayLegs.reduce((sum, l) => sum + l.distance_meters, 0);
+              const totalSecs = dayLegs.reduce((sum, l) => sum + l.duration_seconds, 0);
+
+              return (
+                <div class="day-card" id={`day-card-${day.day_number}`}>
+                  <div class="day-header">
+                    <div class="day-title-wrap">
+                      <span class="day-num">Day {day.day_number}</span>
+                      <span class="day-date">{day.date}</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                      {totalMeters > 0 && (
+                        <span class="day-transit-badge">
+                          🚗 ~{(totalMeters / 1000).toFixed(1)} km • {Math.round(totalSecs / 60)} min travel
+                        </span>
+                      )}
+                      <button
+                        class="btn btn-outline btn-sm"
+                        onclick={`sendPrompt('Optimize Day ${day.day_number} route')`}
+                      >
+                        ⚡ Optimize Route
+                      </button>
+                      <button
+                        class="btn btn-primary btn-sm"
+                        onclick={`openAddStopModal(${day.day_number})`}
+                      >
+                        + Stop
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Morning, Afternoon, Evening groups */}
+                  {['morning', 'afternoon', 'evening'].map((secType) => {
+                    const secStops = dayStops.filter((s) => s.section_type === secType);
+                    if (secStops.length === 0) return null;
+
+                    return (
+                      <div class="section-group">
+                        <div class="section-title">
+                          <span>{secType === 'morning' ? '🌅' : secType === 'afternoon' ? '☀️' : '🌙'}</span>
+                          <span>{secType}</span>
+                        </div>
+
+                        {secStops.map((stop, sIdx) => {
+                          // Find transit leg following this stop
+                          const nextLeg = dayLegs.find((l) => l.from_stop_id === stop.id);
+
+                          return (
+                            <div>
+                              <div
+                                class="stop-card"
+                                id={`stop-${stop.id}`}
+                                onmouseenter={`highlightMapMarker('${stop.id}')`}
+                                onmouseleave={`unhighlightMapMarker('${stop.id}')`}
+                                onclick={`focusMapMarker('${stop.id}')`}
+                              >
+                                <div class="pin-badge">{sIdx + 1}</div>
+                                <div class="stop-info">
+                                  <div class="stop-name">
+                                    <span>{stop.place_name}</span>
+                                    {stop.rating && <span style="font-size: 0.75rem; color: #f59e0b;">⭐ {stop.rating}</span>}
+                                  </div>
+                                  <div class="stop-meta">
+                                    {stop.arrival_time && <span>🕒 {stop.arrival_time}</span>}
+                                    {stop.duration_minutes && <span>⏳ {stop.duration_minutes} min</span>}
+                                    <span>🏷️ {stop.category}</span>
+                                    <span>📍 {stop.formatted_address}</span>
+                                  </div>
+                                  {stop.user_notes && (
+                                    <div class="stop-notes">{stop.user_notes}</div>
+                                  )}
+                                </div>
+                                <div style="display: flex; gap: 0.3rem;">
+                                  <button
+                                    class="btn btn-outline btn-sm"
+                                    onclick={`event.stopPropagation(); sendPrompt('Move ${stop.place_name.replace(/'/g, "\\'")} to Day ${day.day_number === 1 ? 2 : 1} afternoon')`}
+                                  >
+                                    Move
+                                  </button>
+                                  <button
+                                    class="btn btn-outline btn-sm"
+                                    style="color: #ef4444;"
+                                    onclick={`event.stopPropagation(); sendPrompt('Remove ${stop.place_name.replace(/'/g, "\\'")}')`}
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              </div>
+
+                              {nextLeg && (
+                                <div class="transit-leg">
+                                  <span>{nextLeg.transit_mode === 'walking' ? '🚶' : nextLeg.transit_mode === 'driving' ? '🚗' : '🚇'}</span>
+                                  <span>{nextLeg.route_instructions}</span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+
+          <!-- TAB 2: WISHLIST -->
+          <div id="tab-wishlist" class="tab-panel" style="display: none;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+              <h3>Unscheduled Places</h3>
+              <button class="btn btn-primary btn-sm" onclick="promptWishlistStop()">+ Add to Wishlist</button>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+              {stops.filter(s => !s.day_id).length === 0 ? (
+                <p style="color: var(--text-muted); font-size: 0.85rem;">No unscheduled places. Add any spots you want to visit later!</p>
+              ) : (
+                stops.filter(s => !s.day_id).map((stop) => (
+                  <div class="stop-card">
+                    <div class="pin-badge" style="background: #94a3b8;">📌</div>
+                    <div class="stop-info">
+                      <div class="stop-name">{stop.place_name}</div>
+                      <div class="stop-meta">{stop.formatted_address}</div>
+                    </div>
+                    <button
+                      class="btn btn-primary btn-sm"
+                      onclick={`sendPrompt('Move ${stop.place_name} to Day 1 morning')`}
+                    >
+                      Schedule to Day 1
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <!-- TAB 3: RESERVATIONS -->
+          <div id="tab-reservations" class="tab-panel" style="display: none;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+              <h3>Flights & Lodging</h3>
+              <button class="btn btn-primary btn-sm" onclick="promptAddReservation()">+ Add Booking</button>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+              {reservations.map((res) => (
+                <div class="stop-card">
+                  <span style="font-size: 1.5rem;">{res.type === 'flight' ? '✈️' : res.type === 'lodging' ? '🏨' : '🎟️'}</span>
+                  <div class="stop-info">
+                    <div class="stop-name">{res.title}</div>
+                    <div class="stop-meta">
+                      {res.confirmation_code && <span class="badge badge-blue">Conf: {res.confirmation_code}</span>}
+                      {res.provider && <span>Provider: {res.provider}</span>}
+                      <span>Cost: {res.currency} {res.cost}</span>
+                    </div>
+                    {res.notes && <div class="stop-notes">{res.notes}</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <!-- TAB 4: BUDGET & SPLITWISE -->
+          <div id="tab-budget" class="tab-panel" style="display: none;">
+            <div style="background: #f8fafc; border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem; margin-bottom: 1.5rem;">
+              <div style="display: flex; justify-content: space-between; font-weight: 700; margin-bottom: 0.5rem;">
+                <span>Total Spent: {activeTrip?.currency} {totalExpenses.toFixed(2)}</span>
+                <span>Budget: {activeTrip?.currency} {budgetCap}</span>
+              </div>
+              <div style="width: 100%; height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden;">
+                <div style={`width: ${budgetPercent}%; height: 100%; background: ${budgetPercent > 90 ? '#ef4444' : '#10b981'};`}></div>
+              </div>
+            </div>
+
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+              <h3>Expenses & Splitwise Debt Settlement</h3>
+              <button class="btn btn-primary btn-sm" onclick="sendPrompt('Who owes whom?')">⚡ Settle Debts</button>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+              {expenses.map((exp) => (
+                <div class="stop-card">
+                  <span style="font-size: 1.35rem;">💸</span>
+                  <div class="stop-info">
+                    <div class="stop-name" style="justify-content: space-between;">
+                      <span>{exp.title}</span>
+                      <span style="font-size: 0.95rem; color: #16a34a;">{exp.currency} {exp.amount}</span>
+                    </div>
+                    <div class="stop-meta">
+                      <span>Paid by: <strong>{exp.payer_name || 'Alice'}</strong></span>
+                      <span>Date: {exp.date}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <!-- TAB 5: CHECKLISTS -->
+          <div id="tab-checklists" class="tab-panel" style="display: none;">
+            <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+              {checklists.map((chk: any) => (
+                <div class="day-card">
+                  <div class="day-header">
+                    <span class="day-num">📋 {chk.title}</span>
+                    <button class="btn btn-outline btn-sm" onclick={`promptAddChecklistItem('${chk.title}')`}>+ Add Item</button>
+                  </div>
+                  <div style="padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
+                    {chk.items.map((item: any) => (
+                      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; cursor: pointer;">
+                        <input
+                          type="checkbox"
+                          checked={item.is_completed === 1}
+                          onchange={`sendPrompt('Check off ${item.title.replace(/'/g, "\\'")}')`}
+                        />
+                        <span style={item.is_completed === 1 ? 'text-decoration: line-through; color: var(--text-muted);' : ''}>
+                          {item.title}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. RIGHT PANE: Interactive Leaflet Map -->
+      <section class="pane-map">
+        <div class="map-overlay-controls">
+          <span>Filter:</span>
+          <select id="mapDayFilter" onchange="filterMapByDay(this.value)">
+            <option value="all">All Days</option>
+            {days.map((d) => (
+              <option value={d.day_number}>Day {d.day_number}</option>
+            ))}
+          </select>
+        </div>
+        <div id="map"></div>
+      </section>
+    </main>
+
+    <!-- Leaflet JS -->
+    <script
+      is:inline
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+
+    <!-- Inlined Client Script for Bi-Directional Map & Split-Screen Sync -->
+    <script is:inline define:vars={{ initialClientData }}>
+      const clientState = initialClientData;
+      let mapInstance = null;
+      let markerMap = new Map();
+      let polylines = [];
+
+      // Day palette for colored map markers & polylines
+      const DAY_COLORS = ['#2563eb', '#16a34a', '#d97706', '#9333ea', '#e11d48', '#0891b2'];
+
+      // Initialize Leaflet Map
+      function initMap() {
+        const defaultCenter = [35.0116, 135.7681]; // Kyoto center
+        mapInstance = L.map('map', { zoomControl: false }).setView(defaultCenter, 13);
+        L.control.zoom({ position: 'bottomright' }).addTo(mapInstance);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+          attribution: '&copy; OpenStreetMap contributors',
+        }).addTo(mapInstance);
+
+        renderMapPins();
+      }
+
+      function renderMapPins(dayFilter = 'all') {
+        // Clear existing markers & polylines
+        markerMap.forEach((m) => mapInstance.removeLayer(m));
+        markerMap.clear();
+        polylines.forEach((p) => mapInstance.removeLayer(p));
+        polylines = [];
+
+        const bounds = L.latLngBounds();
+        let pinCount = 0;
+
+        // Group stops by day for route polylines
+        const stopsByDay = {};
+
+        clientState.stops.forEach((stop, idx) => {
+          if (!stop.lat || !stop.lng) return;
+
+          // Day filtering
+          const stopDay = clientState.days.find((d) => d.id === stop.day_id);
+          const dayNum = stopDay ? stopDay.day_number : null;
+
+          if (dayFilter !== 'all' && dayNum !== parseInt(dayFilter, 10)) {
+            return;
+          }
+
+          const color = dayNum ? DAY_COLORS[(dayNum - 1) % DAY_COLORS.length] : '#64748b';
+          const iconHtml = `<div style="
+            background: ${color};
+            color: #ffffff;
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 11px;
+            border: 2px solid #ffffff;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+          ">${idx + 1}</div>`;
+
+          const customIcon = L.divIcon({
+            html: iconHtml,
+            className: '',
+            iconSize: [26, 26],
+            iconAnchor: [13, 13],
+          });
+
+          const marker = L.marker([stop.lat, stop.lng], { icon: customIcon }).addTo(mapInstance);
+          marker.bindPopup(`
+            <div style="font-family: system-ui; font-size: 12px;">
+              <strong>${stop.place_name}</strong><br/>
+              ${dayNum ? `Day ${dayNum} (${stop.section_type || ''})` : 'Wishlist'}<br/>
+              ${stop.formatted_address || ''}
+            </div>
+          `);
+
+          // Marker click syncs to card
+          marker.on('click', () => {
+            const card = document.getElementById(`stop-${stop.id}`);
+            if (card) {
+              card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              card.classList.add('highlighted');
+              setTimeout(() => card.classList.remove('highlighted'), 2000);
+            }
+          });
+
+          markerMap.set(stop.id, marker);
+          bounds.extend([stop.lat, stop.lng]);
+          pinCount++;
+
+          if (dayNum) {
+            if (!stopsByDay[dayNum]) stopsByDay[dayNum] = [];
+            stopsByDay[dayNum].push([stop.lat, stop.lng]);
+          }
+        });
+
+        // Draw colored polyline routes between stops on the same day
+        Object.keys(stopsByDay).forEach((dNum) => {
+          const coords = stopsByDay[dNum];
+          if (coords.length > 1) {
+            const color = DAY_COLORS[(parseInt(dNum, 10) - 1) % DAY_COLORS.length];
+            const line = L.polyline(coords, {
+              color,
+              weight: 3,
+              opacity: 0.8,
+              dashArray: '6, 6',
+            }).addTo(mapInstance);
+            polylines.push(line);
+          }
+        });
+
+        if (pinCount > 0) {
+          mapInstance.fitBounds(bounds, { padding: [40, 40] });
+        }
+      }
+
+      function filterMapByDay(day) {
+        renderMapPins(day);
+      }
+
+      function highlightMapMarker(stopId) {
+        const marker = markerMap.get(stopId);
+        if (marker) {
+          marker.openPopup();
+        }
+      }
+
+      function unhighlightMapMarker(stopId) {
+        const marker = markerMap.get(stopId);
+        if (marker) {
+          marker.closePopup();
+        }
+      }
+
+      function focusMapMarker(stopId) {
+        const marker = markerMap.get(stopId);
+        if (marker) {
+          mapInstance.panTo(marker.getLatLng());
+          marker.openPopup();
+        }
+      }
+
+      // Tab Switcher
+      function switchTab(tabName, el) {
+        document.querySelectorAll('.canvas-tab').forEach((t) => t.classList.remove('active'));
+        el.classList.add('active');
+
+        document.querySelectorAll('.tab-panel').forEach((p) => (p.style.display = 'none'));
+        const active = document.getElementById(`tab-${tabName}`);
+        if (active) active.style.display = 'block';
+      }
+
+      // Conversational Assistant Handler
+      async function sendPrompt(text) {
+        const input = document.getElementById('chatInput');
+        if (input) input.value = text;
+        await submitChatMessage(text);
+      }
+
+      async function handleChatSubmit(e) {
+        e.preventDefault();
+        const input = document.getElementById('chatInput');
+        const text = input.value.trim();
+        if (!text) return;
+        input.value = '';
+        await submitChatMessage(text);
+      }
+
+      async function submitChatMessage(text) {
+        const container = document.getElementById('chatMessages');
+
+        // Append user bubble
+        const userDiv = document.createElement('div');
+        userDiv.className = 'chat-bubble chat-bubble-user';
+        userDiv.innerText = text;
+        container.appendChild(userDiv);
+        container.scrollTop = container.scrollHeight;
+
+        // Append loading bubble
+        const loadingDiv = document.createElement('div');
+        loadingDiv.className = 'chat-bubble chat-bubble-assistant';
+        loadingDiv.innerHTML = '<em>Thinking and updating itinerary...</em>';
+        container.appendChild(loadingDiv);
+        container.scrollTop = container.scrollHeight;
+
+        try {
+          const res = await fetch('/api/v1/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              trip_id: clientState.activeTrip ? clientState.activeTrip.id : undefined,
+              message: text,
+            }),
+          });
+
+          const data = await res.json();
+          container.removeChild(loadingDiv);
+
+          const assistantDiv = document.createElement('div');
+          assistantDiv.className = 'chat-bubble chat-bubble-assistant';
+
+          let badgesHtml = '';
+          if (data.actions_taken && data.actions_taken.length > 0) {
+            badgesHtml = data.actions_taken
+              .map((a) => `<div class="tool-badge">⚡ ${a.tool}</div>`)
+              .join(' ');
+          }
+
+          // Simple markdown newline formatting
+          const formattedReply = (data.reply || '')
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*(.*?)\*/g, '<em>$1</em>')
+            .replace(/•/g, '<br/>•')
+            .replace(/\n\n/g, '<br/><br/>')
+            .replace(/\n/g, '<br/>');
+
+          assistantDiv.innerHTML = `${badgesHtml}<div>${formattedReply}</div>`;
+          container.appendChild(assistantDiv);
+          container.scrollTop = container.scrollHeight;
+
+          // If new trip created, redirect to it
+          if (data.trip_id && (!clientState.activeTrip || clientState.activeTrip.id !== data.trip_id)) {
+            setTimeout(() => {
+              window.location.search = `?trip_id=${data.trip_id}`;
+            }, 1000);
+            return;
+          }
+
+          // Reload page to reflect fresh database mutations on canvas & map
+          setTimeout(() => {
+            window.location.reload();
+          }, 1200);
+        } catch (err) {
+          container.removeChild(loadingDiv);
+          const errorDiv = document.createElement('div');
+          errorDiv.className = 'chat-bubble chat-bubble-assistant';
+          errorDiv.style.color = '#ef4444';
+          errorDiv.innerText = `Error: ${err.message}`;
+          container.appendChild(errorDiv);
+        }
+      }
+
+      // Export Helper
+      function exportData(format) {
+        if (!clientState.activeTrip) return;
+        window.open(`/api/v1/trips/${clientState.activeTrip.id}/export?format=${format}`, '_blank');
+      }
+
+      function promptNewTrip() {
+        const dest = prompt('Enter trip destination (e.g. Tokyo, Paris, Rome, Kyoto):', 'Tokyo');
+        if (dest) {
+          sendPrompt(`Plan a 3-day trip to ${dest}`);
+        }
+      }
+
+      function openAddStopModal(dayNum) {
+        const place = prompt(`Enter place name for Day ${dayNum} (e.g. Kinkaku-ji, Tsukiji Market):`);
+        if (place) {
+          sendPrompt(`Add ${place} to Day ${dayNum} morning`);
+        }
+      }
+
+      function promptWishlistStop() {
+        const place = prompt('Enter place name to save to Wishlist:');
+        if (place) {
+          sendPrompt(`Add ${place} to wishlist`);
+        }
+      }
+
+      function promptAddReservation() {
+        const details = prompt('Enter booking details (e.g. Hotel reservation at Hyatt Kyoto for $450 confirmation HYT123):');
+        if (details) {
+          sendPrompt(`Add ${details}`);
+        }
+      }
+
+      function promptAddChecklistItem(listTitle) {
+        const item = prompt(`Enter item for ${listTitle}:`);
+        if (item) {
+          sendPrompt(`Add ${item} to ${listTitle}`);
+        }
+      }
+
+      // Mount on DOM ready
+      document.addEventListener('DOMContentLoaded', initMap);
+    </script>
   </body>
 </html>
