@@ -1,0 +1,11 @@
+{
+  "name": "tripplanner",
+  "displayName": "TripPlanner (Wanderlog Companion)",
+  "description": "Collaborative Wanderlog-style trip planning companion. Connects Antigravity (agy) sessions directly to the live Web UI, SQLite/D1 database, route optimizer, Splitwise budget settlement, and reservations ledger.",
+  "version": "1.0.0",
+  "suggestedPrompts": [
+    "Show me what is currently selected in my TripPlanner UI session",
+    "Add Kinkaku-ji temple to Day 2 afternoon and highlight it on the map",
+    "Optimize our Day 1 walking itinerary to minimize travel time"
+  ]
+}
