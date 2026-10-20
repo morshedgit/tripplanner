@@ -505,6 +505,21 @@ export const MCP_TOOLS: McpToolDefinition[] = [
       required: ['action'],
     },
   },
+  {
+    name: 'render_diorama',
+    description:
+      'Renders a photorealistic 3D isometric diorama scene using Headless Blender 5.x and Cycles Metal GPU, featuring physical rock/soil chunk strata, resin water, enlarged architectural POIs, glowing route ribbon, and floating frosted-glass HUD.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        trip_id: { type: 'string', description: 'Trip ID (defaults to active_trip_id)' },
+        day_number: { type: 'integer', description: 'Day number to render (defaults to active_day_number or 1)' },
+        quality: { type: 'string', enum: ['draft', 'standard', 'high'], description: 'Rendering quality / sample depth' },
+        force: { type: 'boolean', description: 'Force re-render ignoring cache' },
+        session_id: { type: 'string', description: "Session ID (defaults to 'default')" },
+      },
+    },
+  },
 ];
 
 // ============================================================================
@@ -951,6 +966,34 @@ export async function executeMcpTool(
 
       return {
         item,
+        session: updated,
+        state_version: updated.state_version,
+      };
+    }
+
+    case 'render_diorama': {
+      const session = await getOrCreateSession(db, sessionId);
+      const tripId = args.trip_id || session.active_trip_id || 'trip-kyoto-2026';
+      const dayNumber = args.day_number ?? session.active_day_number ?? 1;
+      const { renderDiorama } = await import('./dioramaEngine');
+      const res = await renderDiorama(db, {
+        tripId,
+        dayNumber,
+        quality: args.quality || 'standard',
+        forceRerender: args.force ?? false,
+      });
+
+      const updated = await bumpSessionState(db, {
+        sessionId,
+        tripId,
+        actor: 'agy',
+        action: 'render_diorama',
+        summary: `Rendered 3D Isometric Diorama for Day ${dayNumber}`,
+        payload: { imageUrl: res.imageUrl, metrics: res.metrics },
+      });
+
+      return {
+        ...res,
         session: updated,
         state_version: updated.state_version,
       };

@@ -1771,6 +1771,7 @@ interface ParsedIntent {
     | 'summarize_itinerary'
     | 'navigate_session'
     | 'audit_safety'
+    | 'render_diorama'
     | 'general_chat';
   params: any;
 }
@@ -2007,6 +2008,16 @@ export function parseNaturalLanguageIntent(
     const dayNumber = dayMatch ? parseInt(dayMatch[1], 10) : sessionContext?.activeDayNumber;
     return {
       intent: 'audit_safety',
+      params: { dayNumber },
+    };
+  }
+
+  // 11. 3D Isometric Diorama & 2.5D Scene: "render diorama", "3d isometric", "diorama chunk", "generate 2.5d"
+  if (/diorama|2\.5d|isometric|3d\s+chunk|miniature\s+world|render\s+3d/i.test(msg)) {
+    const dayMatch = msg.match(/day\s+(\d+)/i);
+    const dayNumber = dayMatch ? parseInt(dayMatch[1], 10) : (sessionContext?.activeDayNumber || 1);
+    return {
+      intent: 'render_diorama',
       params: { dayNumber },
     };
   }
@@ -2267,6 +2278,36 @@ export async function processChatMessage(
         tool: 'audit_safety',
         summary: `Audited traveler safety and operational cutoffs for Day ${targetDay?.day_number || 1}`,
         payload: { dayNumber: targetDay?.day_number, totalSteps: audit.totalEstimatedSteps, cashOnly: audit.cashOnlyCount },
+      });
+      break;
+    }
+
+    case 'render_diorama': {
+      if (!activeTripId) {
+        reply = "No active trip found to render. Please select or create a trip first.";
+        break;
+      }
+      const dayNumber = parsed.params.dayNumber || (sessionContext?.activeDayNumber || 1);
+      const { renderDiorama } = await import('./dioramaEngine');
+      const diorama = await renderDiorama(db, {
+        tripId: activeTripId,
+        dayNumber,
+        quality: 'standard',
+      });
+
+      let rep = `### [3D Diorama] 3D Isometric Diorama Chunk (Day ${dayNumber})\n\n`;
+      rep += `• **Region**: ${diorama.region}\n`;
+      rep += `• **Tactile Architecture**: Self-contained floating geological rock/soil chunk with exposed strata, glossy resin river, enlarged architectural POIs, glowing neon route ribbon, and physical frosted-glass HUD.\n`;
+      rep += `• **Pacing & Route**: ${diorama.metrics}\n`;
+      rep += `• **Engine**: Headless Blender 5.x · Cycles Metal GPU (${diorama.samples} samples, ${diorama.width}x${diorama.height})\n\n`;
+      rep += `![3D Diorama Chunk](${diorama.imageUrl})\n\n`;
+      rep += `*Tip: Tap the **2.5D Diorama** button on the map canvas to inspect the scene in interactive high resolution.*`;
+
+      reply = rep;
+      actionsTaken.push({
+        tool: 'render_diorama',
+        summary: `Rendered 3D Isometric Diorama Chunk for Day ${dayNumber}`,
+        payload: { imageUrl: diorama.imageUrl, metrics: diorama.metrics, dayNumber },
       });
       break;
     }
