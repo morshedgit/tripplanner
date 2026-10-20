@@ -284,11 +284,13 @@ const initialClientData = {
         flex-shrink: 0;
       }
 
-      /* ================= TOP NAVBAR ================= */
+      /* ================= TOP NAVBAR: FROSTED GLASS ================= */
       header.app-header {
         height: var(--header-height);
-        background: #ffffff;
-        border-bottom: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.88);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-bottom: 1px solid rgba(15, 23, 42, 0.08);
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -309,6 +311,7 @@ const initialClientData = {
         gap: 0.45rem;
         font-weight: 800;
         font-size: 1.1rem;
+        letter-spacing: -0.03em;
         color: #0f172a;
         text-decoration: none;
       }
@@ -325,10 +328,15 @@ const initialClientData = {
         align-items: center;
         gap: 0.4rem;
         background: #f1f5f9;
-        border: 1px solid var(--border);
+        border: 1px solid rgba(15, 23, 42, 0.08);
         padding: 0.3rem 0.65rem;
         border-radius: 7px;
         color: var(--text-secondary);
+        transition: all 0.15s ease;
+      }
+
+      .trip-select-wrap:hover {
+        border-color: #cbd5e1;
       }
 
       .trip-select-wrap select {
@@ -347,22 +355,24 @@ const initialClientData = {
         display: flex;
         align-items: center;
         gap: 0.5rem;
+        font-variant-numeric: tabular-nums;
       }
 
       .badge {
         display: inline-flex;
         align-items: center;
         gap: 0.3rem;
-        padding: 0.18rem 0.5rem;
+        padding: 0.2rem 0.55rem;
         border-radius: 6px;
         font-size: 0.72rem;
         font-weight: 600;
         white-space: nowrap;
+        font-variant-numeric: tabular-nums;
       }
 
-      .badge-blue { background: #dbeafe; color: #1e40af; }
-      .badge-green { background: #d1fae5; color: #065f46; }
-      .badge-orange { background: #ffedd5; color: #9a3412; }
+      .badge-blue { background: #dbeafe; color: #1e40af; border: 1px solid #bfdbfe; }
+      .badge-green { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
+      .badge-orange { background: #ffedd5; color: #9a3412; border: 1px solid #fed7aa; }
 
       .header-right {
         display: flex;
@@ -379,15 +389,45 @@ const initialClientData = {
         font-size: 0.8rem;
         font-weight: 600;
         cursor: pointer;
-        transition: all 0.15s ease;
+        transition: transform 0.12s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
         border: 1px solid transparent;
         text-decoration: none;
+        user-select: none;
       }
 
-      .btn-primary { background: var(--primary); color: #ffffff; }
-      .btn-primary:hover { background: var(--primary-hover); }
-      .btn-outline { background: #ffffff; border-color: var(--border); color: var(--text-secondary); }
-      .btn-outline:hover { background: #f8fafc; color: var(--text-primary); }
+      .btn:hover {
+        transform: translateY(-1px);
+      }
+
+      .btn:active {
+        transform: scale(0.98);
+      }
+
+      .btn-primary {
+        background: var(--primary);
+        color: #ffffff;
+        box-shadow: 0 1px 2px rgba(37, 99, 235, 0.15);
+      }
+
+      .btn-primary:hover {
+        background: var(--primary-hover);
+        box-shadow: 0 3px 8px rgba(37, 99, 235, 0.25);
+      }
+
+      .btn-outline {
+        background: #ffffff;
+        border-color: rgba(15, 23, 42, 0.12);
+        color: var(--text-secondary);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+      }
+
+      .btn-outline:hover {
+        background: #f8fafc;
+        border-color: #cbd5e1;
+        color: var(--text-primary);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+      }
+
       .btn-sm { padding: 0.25rem 0.6rem; font-size: 0.76rem; }
 
       /* Sleek Header Popover Dropdown */
@@ -856,12 +896,13 @@ const initialClientData = {
       }
 
       .hero-title {
-        font-size: 1.55rem;
+        font-size: 1.6rem;
         font-weight: 800;
-        letter-spacing: -0.025em;
+        letter-spacing: -0.035em;
         color: #ffffff;
         line-height: 1.2;
-        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.45);
+        text-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+        text-wrap: balance;
       }
 
       .hero-pills {
@@ -869,6 +910,7 @@ const initialClientData = {
         flex-wrap: wrap;
         align-items: center;
         gap: 0.5rem;
+        font-variant-numeric: tabular-nums;
       }
 
       .hero-pill {
@@ -876,14 +918,15 @@ const initialClientData = {
         align-items: center;
         gap: 0.35rem;
         background: rgba(15, 23, 42, 0.55);
-        backdrop-filter: blur(6px);
-        -webkit-backdrop-filter: blur(6px);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
         border: 1px solid rgba(255, 255, 255, 0.25);
         border-radius: 16px;
-        padding: 0.2rem 0.6rem;
+        padding: 0.22rem 0.65rem;
         font-size: 0.72rem;
         font-weight: 600;
         color: #f8fafc;
+        font-variant-numeric: tabular-nums;
       }
 
       .hero-collaborators {
@@ -926,11 +969,13 @@ const initialClientData = {
         border-radius: 10px;
       }
 
-      /* Canvas Tabs: Permanently pinned above scrolling canvas content */
+      /* Canvas Tabs: Permanently pinned frosted navigation bar */
       .canvas-tabs {
         display: flex;
-        border-bottom: 1px solid var(--border);
-        background: #ffffff;
+        border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+        background: rgba(255, 255, 255, 0.92);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
         padding: 0 1rem;
         flex-shrink: 0;
         height: 46px;
@@ -958,7 +1003,7 @@ const initialClientData = {
         display: flex;
         align-items: center;
         gap: 0.35rem;
-        transition: all 0.15s ease;
+        transition: color 0.15s ease, border-color 0.15s ease;
         height: 46px;
       }
 
@@ -969,7 +1014,7 @@ const initialClientData = {
       .canvas-tab.active {
         color: var(--primary);
         border-bottom-color: var(--primary);
-        background: #ffffff;
+        font-weight: 700;
       }
 
       .canvas-content {
@@ -1000,22 +1045,30 @@ const initialClientData = {
         display: inline-flex;
         align-items: center;
         gap: 0.4rem;
-        padding: 0.35rem 0.75rem;
+        padding: 0.35rem 0.8rem;
         border-radius: 20px;
         font-size: 0.78rem;
         font-weight: 600;
-        border: 1px solid var(--border);
+        border: 1px solid rgba(15, 23, 42, 0.08);
         background: #ffffff;
         color: var(--text-secondary);
         cursor: pointer;
         white-space: nowrap;
-        transition: all 0.15s ease;
+        transition: transform 0.12s ease, border-color 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+        font-variant-numeric: tabular-nums;
+        user-select: none;
       }
 
       .day-pill:hover {
-        border-color: var(--primary);
-        color: var(--primary);
+        transform: translateY(-1px);
+        border-color: #cbd5e1;
+        color: var(--text-primary);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+      }
+
+      .day-pill:active {
+        transform: scale(0.97);
       }
 
       .day-pill.active {
@@ -1121,13 +1174,15 @@ const initialClientData = {
       .day-transit-badge {
         display: inline-flex;
         align-items: center;
-        gap: 0.3rem;
+        gap: 0.35rem;
         font-size: 0.72rem;
-        color: #475569;
-        background: #e2e8f0;
-        padding: 0.15rem 0.45rem;
-        border-radius: 5px;
+        color: #334155;
+        background: #f1f5f9;
+        border: 1px solid #e2e8f0;
+        padding: 0.18rem 0.55rem;
+        border-radius: 6px;
         font-weight: 500;
+        font-variant-numeric: tabular-nums;
       }
 
       .section-group {
@@ -1180,27 +1235,32 @@ const initialClientData = {
       /* Stop Cards with 76x76 Photo Thumbnails */
       .stop-card {
         background: #ffffff;
-        border: 1px solid var(--border);
-        border-radius: 11px;
-        padding: 0.65rem 0.85rem;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        border-radius: 12px;
+        padding: 0.75rem 0.95rem;
         display: flex;
         align-items: center;
-        gap: 0.75rem;
-        transition: all 0.15s ease;
+        gap: 0.85rem;
+        transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.15s ease, border-color 0.15s ease;
         position: relative;
         cursor: pointer;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.02);
       }
 
       .stop-card:hover {
+        transform: translateY(-1px);
         border-color: #cbd5e1;
-        box-shadow: 0 3px 10px rgba(0, 0, 0, 0.05);
+        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.07);
+      }
+
+      .stop-card:active {
+        transform: scale(0.995);
       }
 
       .stop-card.highlighted {
         border-color: var(--primary);
-        background: #eff6ff;
-        box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.25);
+        background: #f8faff;
+        box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2), 0 4px 14px rgba(37, 99, 235, 0.08);
       }
 
       .pin-badge {
@@ -1275,11 +1335,13 @@ const initialClientData = {
       .stop-meta {
         font-size: 0.72rem;
         color: var(--text-secondary);
-        margin-top: 0.2rem;
+        margin-top: 0.25rem;
         display: flex;
         flex-wrap: wrap;
         align-items: center;
-        gap: 0.5rem;
+        gap: 0.65rem;
+        font-variant-numeric: tabular-nums;
+        font-weight: 500;
       }
 
       .stop-meta span {
@@ -1384,18 +1446,29 @@ const initialClientData = {
         border-color: #fca5a5 !important;
       }
 
-      /* Inline transit connector along spine */
+      /* Interactive transit connector along spine */
       .transit-connector {
         margin: 0.35rem 0 0.35rem 1.25rem;
-        padding: 0.25rem 0.6rem;
-        background: #f8fafc;
-        border-left: 2px dashed #94a3b8;
+        padding: 0.28rem 0.65rem;
+        background: #f1f5f9;
+        border-left: 2px solid #94a3b8;
         border-radius: 0 6px 6px 0;
         font-size: 0.72rem;
-        color: #475569;
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+        color: #334155;
         display: inline-flex;
         align-items: center;
         gap: 0.45rem;
+        transition: all 0.15s ease;
+        cursor: pointer;
+        user-select: none;
+      }
+
+      .transit-connector:hover {
+        background: #e2e8f0;
+        border-left-color: var(--primary);
+        color: #0f172a;
       }
 
       /* Boarding Pass Bookings */
@@ -2624,7 +2697,11 @@ const initialClientData = {
                                 </div>
 
                                 {nextLeg && (
-                                  <div class="transit-connector">
+                                  <div
+                                    class="transit-connector"
+                                    onclick={`highlightTransitLeg('${stop.id}', '${nextLeg.to_stop_id}')`}
+                                    title="View transit leg on map"
+                                  >
                                     <span
                                       class="icon-inline"
                                       set:html={getIconSvg(nextLeg.transit_mode === 'walking' ? 'walk' : nextLeg.transit_mode === 'driving' ? 'car' : 'train-front', 13)}
@@ -3322,7 +3399,7 @@ const initialClientData = {
           if (isHydration) {
             mapInstance.flyToBounds(bounds, { padding: [45, 45], duration: 0.7 });
           } else {
-            mapInstance.fitBounds(bounds, { padding: [40, 40] });
+            mapInstance.flyToBounds(bounds, { padding: [45, 45], duration: 0.6 });
           }
         }
       }
@@ -3336,6 +3413,21 @@ const initialClientData = {
         const marker = markerMap.get(stopId);
         if (marker) marker.closePopup();
       }
+
+      function highlightTransitLeg(fromStopId, toStopId) {
+        if (!mapInstance) return;
+        const fromStop = (clientState.stops || []).find((s) => s.id === fromStopId);
+        const toStop = (clientState.stops || []).find((s) => s.id === toStopId);
+        if (fromStop && toStop && fromStop.lat && toStop.lat) {
+          const legBounds = L.latLngBounds([
+            [fromStop.lat, fromStop.lng],
+            [toStop.lat, toStop.lng],
+          ]);
+          mapInstance.fitBounds(legBounds, { padding: [60, 60], maxZoom: 15 });
+          highlightMapMarker(fromStopId);
+        }
+      }
+      window.highlightTransitLeg = highlightTransitLeg;
 
       // Zero-Reload Reactive DOM Hydration
       async function refreshWorkspaceDom(targetTripId) {
