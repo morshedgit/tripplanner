@@ -80,6 +80,7 @@ if (activeTrip) {
 
   stops = await db.query<any>(
     `SELECT s.*, p.name as place_name, p.formatted_address, p.lat, p.lng, p.category, p.rating, p.notes as place_notes,
+            p.website, p.phone_number, p.google_place_id,
             sec.day_id, sec.section_type, sec.title as section_title
      FROM stops s
      JOIN places p ON s.place_id = p.id
@@ -250,7 +251,7 @@ const initialClientData = {
         --success: #10b981;
         --warning: #f59e0b;
         --header-height: 56px;
-        --session-bar-height: 40px;
+        --session-bar-height: 0px;
       }
 
       * {
@@ -467,18 +468,71 @@ const initialClientData = {
       }
 
       /* ================= LIVE SESSION STATUS BAR ================= */
+      /* Hidden visually to unclutter UI while preserving DOM IDs for bi-directional telemetry */
       .session-status-bar {
-        height: var(--session-bar-height);
-        background: #0f172a;
-        color: #e2e8f0;
-        display: flex;
+        display: none !important;
+        height: 0px;
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      /* Single Top Header Live Sync Pill */
+      .live-sync-indicator {
+        display: inline-flex;
         align-items: center;
-        justify-content: space-between;
-        padding: 0 1.25rem;
-        font-size: 0.78rem;
-        flex-shrink: 0;
-        border-bottom: 1px solid #1e293b;
-        z-index: 998;
+        gap: 0.35rem;
+        padding: 0.22rem 0.65rem;
+        background: rgba(16, 185, 129, 0.08);
+        color: #059669;
+        border: 1px solid rgba(16, 185, 129, 0.25);
+        border-radius: 9999px;
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+
+      .ai-toggle-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-weight: 600;
+        color: #4f46e5 !important;
+        border-color: #c7d2fe !important;
+        background: #f5f3ff !important;
+        transition: all 0.15s ease;
+      }
+
+      .ai-toggle-btn:hover {
+        background: #ede9fe !important;
+        border-color: #a5b4fc !important;
+      }
+
+      .ai-toggle-btn.active {
+        background: #4f46e5 !important;
+        color: #ffffff !important;
+        border-color: #4338ca !important;
+      }
+
+      .ai-toggle-btn.active .icon-inline {
+        color: #ffffff !important;
+      }
+
+      .btn-icon-subtle {
+        background: transparent;
+        border: none;
+        color: #94a3b8;
+        cursor: pointer;
+        padding: 4px;
+        border-radius: 4px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+
+      .btn-icon-subtle:hover {
+        background: #f1f5f9;
+        color: #1e293b;
       }
 
       .session-status-left {
@@ -599,6 +653,7 @@ const initialClientData = {
         flex: 1;
         height: calc(100vh - var(--header-height) - var(--session-bar-height));
         overflow: hidden;
+        position: relative;
       }
 
       /* ----- LEFT PANE: CHAT ASSISTANT ----- */
@@ -610,6 +665,11 @@ const initialClientData = {
         display: flex;
         flex-direction: column;
         height: 100%;
+        transition: width 0.25s ease, opacity 0.2s ease;
+      }
+
+      .pane-chat.collapsed {
+        display: none !important;
       }
 
       .pane-header {
@@ -738,11 +798,12 @@ const initialClientData = {
       /* ----- CENTER PANE: DOCUMENT CANVAS ----- */
       .pane-canvas {
         flex: 1;
-        overflow-y: auto;
+        overflow: hidden;
         background: #ffffff;
         border-right: 1px solid var(--border);
         display: flex;
         flex-direction: column;
+        min-width: 0;
       }
 
       /* Editorial Hero Banner */
@@ -865,19 +926,20 @@ const initialClientData = {
         border-radius: 10px;
       }
 
-      /* Canvas Tabs */
+      /* Canvas Tabs: Permanently pinned above scrolling canvas content */
       .canvas-tabs {
         display: flex;
         border-bottom: 1px solid var(--border);
-        background: #f8fafc;
-        padding: 0 0.85rem;
-        position: sticky;
-        top: 0;
-        z-index: 100;
+        background: #ffffff;
+        padding: 0 1rem;
+        flex-shrink: 0;
+        height: 46px;
+        align-items: center;
         overflow-x: auto;
         white-space: nowrap;
         scrollbar-width: none;
         -webkit-overflow-scrolling: touch;
+        z-index: 50;
       }
       .canvas-tabs::-webkit-scrollbar {
         display: none;
@@ -897,6 +959,7 @@ const initialClientData = {
         align-items: center;
         gap: 0.35rem;
         transition: all 0.15s ease;
+        height: 46px;
       }
 
       .canvas-tab:hover {
@@ -910,6 +973,8 @@ const initialClientData = {
       }
 
       .canvas-content {
+        flex: 1;
+        overflow-y: auto;
         padding: 1.25rem;
         max-width: 860px;
         margin: 0 auto;
@@ -1704,6 +1769,275 @@ const initialClientData = {
         box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4) !important;
       }
 
+      /* Day Filter Active Banner */
+      .day-filter-banner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        border-radius: 8px;
+        padding: 0.5rem 0.85rem;
+        margin-bottom: 1rem;
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: #1d4ed8;
+      }
+
+      .day-filter-banner .view-all-link {
+        background: #ffffff;
+        border: 1px solid #93c5fd;
+        color: #1d4ed8;
+        padding: 0.2rem 0.55rem;
+        border-radius: 5px;
+        font-size: 0.72rem;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+
+      .day-filter-banner .view-all-link:hover {
+        background: #dbeafe;
+      }
+
+      /* Stop Card Footer Hints */
+      .stop-footer-hints {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-top: 0.4rem;
+        flex-wrap: wrap;
+      }
+
+      .stop-meta-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        font-size: 0.68rem;
+        color: #475569;
+        background: #f1f5f9;
+        padding: 0.1rem 0.4rem;
+        border-radius: 4px;
+        border: 1px solid #e2e8f0;
+      }
+
+      .stop-detail-hint {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.2rem;
+        font-size: 0.72rem;
+        font-weight: 600;
+        color: var(--primary);
+        margin-left: auto;
+        opacity: 0.8;
+      }
+
+      .stop-card:hover .stop-detail-hint {
+        opacity: 1;
+        text-decoration: underline;
+      }
+
+      /* ================= PLACE DETAIL SLIDE-OVER DRAWER ================= */
+      .place-detail-panel {
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: 420px;
+        max-width: 100%;
+        background: #ffffff;
+        border-left: 1px solid var(--border);
+        box-shadow: -8px 0 32px rgba(15, 23, 42, 0.12);
+        z-index: 1050;
+        display: flex;
+        flex-direction: column;
+        transform: translateX(100%);
+        transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1);
+        overflow-y: auto;
+      }
+
+      .place-detail-panel.open {
+        transform: translateX(0);
+      }
+
+      .pdp-hero {
+        position: relative;
+        height: 180px;
+        background-size: cover;
+        background-position: center;
+        background-color: #1e293b;
+        flex-shrink: 0;
+      }
+
+      .pdp-hero-overlay {
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(to top, rgba(15, 23, 42, 0.85) 0%, rgba(15, 23, 42, 0.2) 60%, rgba(15, 23, 42, 0.4) 100%);
+      }
+
+      .pdp-close-btn {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: rgba(15, 23, 42, 0.6);
+        color: #ffffff;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: background 0.15s ease;
+        z-index: 2;
+      }
+
+      .pdp-close-btn:hover {
+        background: rgba(15, 23, 42, 0.9);
+      }
+
+      .pdp-hero-badges {
+        position: absolute;
+        bottom: 12px;
+        left: 16px;
+        right: 16px;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        z-index: 2;
+      }
+
+      .pdp-body {
+        padding: 1.25rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1.15rem;
+      }
+
+      .pdp-title {
+        font-size: 1.25rem;
+        font-weight: 700;
+        color: #0f172a;
+        line-height: 1.3;
+        margin: 0;
+      }
+
+      .pdp-actions-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+
+      .pdp-action-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.35rem 0.75rem;
+        background: #f1f5f9;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: #334155 !important;
+        text-decoration: none !important;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+
+      .pdp-action-btn:hover {
+        background: #e2e8f0;
+        color: #0f172a;
+      }
+
+      .pdp-action-btn.primary {
+        background: #eff6ff;
+        border-color: #bfdbfe;
+        color: #1d4ed8;
+      }
+
+      .pdp-action-btn.primary:hover {
+        background: #dbeafe;
+      }
+
+      .pdp-section {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+      }
+
+      .pdp-section-label {
+        font-size: 0.72rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #64748b;
+      }
+
+      .pdp-section-content {
+        font-size: 0.85rem;
+        color: #334155;
+        line-height: 1.5;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 0.75rem;
+      }
+
+      .pdp-schedule-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.5rem;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 0.75rem;
+      }
+
+      .pdp-schedule-item {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+      }
+
+      .pdp-schedule-label {
+        font-size: 0.68rem;
+        color: #64748b;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+
+      .pdp-schedule-val {
+        font-size: 0.85rem;
+        font-weight: 700;
+        color: #0f172a;
+      }
+
+      .pdp-transit-card {
+        background: #f0fdf4;
+        border: 1px solid #bbf7d0;
+        border-radius: 8px;
+        padding: 0.75rem;
+        font-size: 0.82rem;
+        color: #166534;
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+      }
+
+      .pdp-transit-header {
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+      }
+
+      .pdp-transit-inst {
+        font-size: 0.78rem;
+        color: #15803d;
+        line-height: 1.4;
+      }
+
       @media (max-width: 1100px) {
         .pane-map { width: 340px; }
         .pane-chat { width: 320px; }
@@ -1715,6 +2049,7 @@ const initialClientData = {
         .pane-chat { width: 100%; height: 260px; flex-shrink: 0; }
         .pane-canvas { flex: 1; min-height: 500px; }
         .pane-map { width: 100%; height: 280px; flex-shrink: 0; }
+        .place-detail-panel { width: 100%; }
       }
     </style>
     <style is:global>
@@ -1778,6 +2113,11 @@ const initialClientData = {
             </span>
           </div>
         )}
+
+        <span class="live-sync-indicator" title="Connected in real-time with agy session">
+          <span class="live-dot"></span>
+          <span>Live Sync</span>
+        </span>
       </div>
 
       <div class="header-right">
@@ -1817,6 +2157,11 @@ const initialClientData = {
         <button class="btn btn-primary btn-sm" onclick="toggleNewTripPanel()">
           <span class="icon-inline" set:html={getIconSvg('plus', 14)}></span>
           <span>New Trip</span>
+        </button>
+
+        <button class="btn btn-outline btn-sm ai-toggle-btn active" id="aiAssistantToggle" onclick="toggleChatPane()" title="Toggle AI Assistant sidebar">
+          <span class="icon-inline" style="color: #6366f1;" set:html={getIconSvg('sparkles', 14)}></span>
+          <span>✦ AI Assistant</span>
         </button>
       </div>
     </header>
@@ -1894,7 +2239,12 @@ const initialClientData = {
             <span class="icon-inline" style="color: var(--primary);" set:html={getIconSvg('bot', 16)}></span>
             <span>Conversational Agent</span>
           </div>
-          <span class="badge badge-blue" style="font-size: 0.65rem;">Active</span>
+          <div style="display: flex; align-items: center; gap: 0.45rem;">
+            <span class="badge badge-blue" style="font-size: 0.65rem;">Active</span>
+            <button type="button" class="btn-icon-subtle" onclick="toggleChatPane()" title="Collapse AI Assistant">
+              <span class="icon-inline" set:html={getIconSvg('x', 14)}></span>
+            </button>
+          </div>
         </div>
 
         <div class="chat-messages" id="chatMessages">
@@ -2045,6 +2395,12 @@ const initialClientData = {
               ))}
             </div>
 
+            <!-- Day Filter Banner -->
+            <div id="dayFilterBanner" class="day-filter-banner" style={activeDayNumber ? 'display: flex;' : 'display: none;'}>
+              <span id="dayFilterText">Viewing Day {activeDayNumber} · {days.find(d => d.day_number === activeDayNumber)?.date || ''}</span>
+              <button type="button" class="view-all-link" onclick="handleDayPillSelect('all')">View All Days</button>
+            </div>
+
             <!-- Interactive "+ Add Stop" inline bar -->
             <div class="inline-control-card">
               <div class="inline-card-title">
@@ -2081,7 +2437,12 @@ const initialClientData = {
               const totalSecs = dayLegs.reduce((sum, l) => sum + l.duration_seconds, 0);
 
               return (
-                <div class="day-card" id={`day-card-${day.day_number}`}>
+                <div
+                  class="day-card"
+                  id={`day-card-${day.day_number}`}
+                  data-day-number={day.day_number}
+                  style={activeDayNumber && activeDayNumber !== day.day_number ? 'display: none;' : 'display: block;'}
+                >
                   <div class="day-header">
                     <div class="day-title-wrap">
                       <span class="day-num" style={`color: ${DAY_COLORS[(day.day_number - 1) % DAY_COLORS.length]};`}>
@@ -2202,6 +2563,25 @@ const initialClientData = {
                                     {stop.user_notes && (
                                       <div class="stop-notes">{stop.user_notes}</div>
                                     )}
+
+                                    <div class="stop-footer-hints">
+                                      {stop.website && (
+                                        <span class="stop-meta-pill" title="Has official website">
+                                          <span class="icon-inline" set:html={getIconSvg('globe', 11)}></span>
+                                          <span>Website</span>
+                                        </span>
+                                      )}
+                                      {stop.phone_number && (
+                                        <span class="stop-meta-pill" title={stop.phone_number}>
+                                          <span class="icon-inline" set:html={getIconSvg('phone', 11)}></span>
+                                          <span>{stop.phone_number}</span>
+                                        </span>
+                                      )}
+                                      <span class="stop-detail-hint">
+                                        <span>View Details</span>
+                                        <span class="icon-inline" set:html={getIconSvg('external-link', 11)}></span>
+                                      </span>
+                                    </div>
                                   </div>
 
                                   <div class="stop-actions" onclick="event.stopPropagation()">
@@ -2695,6 +3075,38 @@ const initialClientData = {
         </div>
         <div id="map"></div>
       </section>
+
+      <!-- 4. SLIDE-OVER DRAWER: Place Detail Panel (Wanderlog / Google Maps style) -->
+      <aside id="placeDetailPanel" class="place-detail-panel" aria-label="Place Details">
+        <div class="pdp-hero" id="pdpHero">
+          <div class="pdp-hero-overlay"></div>
+          <button type="button" class="pdp-close-btn" onclick="closePlaceDetail()" title="Close details">
+            <span class="icon-inline" set:html={getIconSvg('x', 14)}></span>
+          </button>
+          <div class="pdp-hero-badges" id="pdpBadges"></div>
+        </div>
+        <div class="pdp-body">
+          <h2 class="pdp-title" id="pdpTitle">Place Name</h2>
+          <div class="pdp-actions-row" id="pdpActions"></div>
+          <div class="pdp-schedule-grid" id="pdpSchedule"></div>
+          <div class="pdp-section" id="pdpAddressSection">
+            <div class="pdp-section-label">Address</div>
+            <div class="pdp-section-content" id="pdpAddress"></div>
+          </div>
+          <div class="pdp-section" id="pdpAboutSection">
+            <div class="pdp-section-label">About This Place</div>
+            <div class="pdp-section-content" id="pdpAbout"></div>
+          </div>
+          <div class="pdp-section" id="pdpNotesSection">
+            <div class="pdp-section-label">Trip Notes &amp; Tips</div>
+            <div class="pdp-section-content" id="pdpNotes"></div>
+          </div>
+          <div class="pdp-section" id="pdpTransitSection">
+            <div class="pdp-section-label">Transit to Next Stop</div>
+            <div class="pdp-transit-card" id="pdpTransit"></div>
+          </div>
+        </div>
+      </aside>
     </main>
 
     <!-- Serialized Initial Client Data -->
@@ -2724,6 +3136,10 @@ const initialClientData = {
 
       const DAY_COLORS = ['#2563eb', '#16a34a', '#d97706', '#9333ea', '#e11d48', '#0891b2'];
       const BOLT_SVG_INLINE = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="tp-icon tp-icon-bolt" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>';
+      const GLOBE_SVG_INLINE = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="tp-icon tp-icon-globe" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>';
+      const MAP_PIN_SVG_INLINE = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="tp-icon tp-icon-map-pin" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>';
+      const PHONE_SVG_INLINE = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="tp-icon tp-icon-phone" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>';
+      const EXT_LINK_SVG_INLINE = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="tp-icon tp-icon-external-link" aria-hidden="true"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>';
 
       // LocalStorage Helper for preserving UI state across live reload
       function saveUiState(key, val) {
@@ -3050,13 +3466,15 @@ const initialClientData = {
         }
       }
 
-      // 2. Select Stop: highlights card, pans map, persists to /api/v1/session
+      // 2. Select Stop: highlights card, pans map, opens place details, persists to /api/v1/session
       function selectStop(stopId, stopName, shouldPersist = true) {
         document.querySelectorAll('.stop-card').forEach((c) => c.classList.remove('highlighted'));
         const card = document.getElementById(`stop-${stopId}`);
         if (card) {
           card.classList.add('highlighted');
-          card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          if (shouldPersist) {
+            card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
         }
 
         const marker = markerMap.get(stopId);
@@ -3071,6 +3489,7 @@ const initialClientData = {
         saveUiState('selectedStopId', stopId);
 
         if (shouldPersist) {
+          openPlaceDetail(stopId);
           persistSession({
             selected_stop_id: stopId,
             actor: 'ui',
@@ -3078,6 +3497,179 @@ const initialClientData = {
           });
         }
       }
+
+      // Place Detail Slide-over Panel Handlers
+      function openPlaceDetail(stopId) {
+        const stop = (clientState.stops || []).find((s) => s.id === stopId);
+        if (!stop) return;
+        const panel = document.getElementById('placeDetailPanel');
+        if (!panel) return;
+
+        // 1. Hero Cover
+        const heroEl = document.getElementById('pdpHero');
+        if (heroEl) {
+          heroEl.style.backgroundImage = stop.thumbnail_url ? `url('${stop.thumbnail_url}')` : 'none';
+        }
+
+        // 2. Hero Badges
+        const badgesEl = document.getElementById('pdpBadges');
+        if (badgesEl) {
+          badgesEl.innerHTML = `
+            <span class="category-badge" style="background: rgba(15,23,42,0.85); color: #ffffff; border-color: rgba(255,255,255,0.25);">
+              <span>${stop.category || 'Sight'}</span>
+            </span>
+            ${stop.rating ? `<span class="rating-badge" style="background: rgba(15,23,42,0.85); color: #f59e0b; border-color: rgba(255,255,255,0.25);">★ ${stop.rating}</span>` : ''}
+          `;
+        }
+
+        // 3. Title
+        const titleEl = document.getElementById('pdpTitle');
+        if (titleEl) titleEl.innerText = stop.place_name || 'Place Details';
+
+        // 4. Action Pills
+        const actionsEl = document.getElementById('pdpActions');
+        if (actionsEl) {
+          const gmapsQuery = encodeURIComponent(`${stop.place_name || ''} ${stop.formatted_address || ''}`);
+          const gmapsUrl = `https://www.google.com/maps/search/?api=1&query=${gmapsQuery}`;
+          let html = `
+            <a href="${gmapsUrl}" target="_blank" rel="noopener noreferrer" class="pdp-action-btn primary" title="Open in Google Maps">
+              <span class="icon-inline">${MAP_PIN_SVG_INLINE}</span>
+              <span>Directions</span>
+              <span class="icon-inline">${EXT_LINK_SVG_INLINE}</span>
+            </a>
+          `;
+          if (stop.website) {
+            html += `
+              <a href="${stop.website}" target="_blank" rel="noopener noreferrer" class="pdp-action-btn" title="Visit official website">
+                <span class="icon-inline">${GLOBE_SVG_INLINE}</span>
+                <span>Website</span>
+                <span class="icon-inline">${EXT_LINK_SVG_INLINE}</span>
+              </a>
+            `;
+          }
+          if (stop.phone_number) {
+            html += `
+              <a href="tel:${stop.phone_number}" class="pdp-action-btn" title="Call venue">
+                <span class="icon-inline">${PHONE_SVG_INLINE}</span>
+                <span>${stop.phone_number}</span>
+              </a>
+            `;
+          }
+          actionsEl.innerHTML = html;
+        }
+
+        // 5. Schedule Grid
+        const schedEl = document.getElementById('pdpSchedule');
+        if (schedEl) {
+          schedEl.innerHTML = `
+            <div class="pdp-schedule-item">
+              <span class="pdp-schedule-label">Arrival</span>
+              <span class="pdp-schedule-val">${stop.arrival_time || '—'}</span>
+            </div>
+            <div class="pdp-schedule-item">
+              <span class="pdp-schedule-label">Duration</span>
+              <span class="pdp-schedule-val">${stop.duration_minutes ? stop.duration_minutes + ' min' : '—'}</span>
+            </div>
+            <div class="pdp-schedule-item">
+              <span class="pdp-schedule-label">Departure</span>
+              <span class="pdp-schedule-val">${stop.departure_time || '—'}</span>
+            </div>
+          `;
+        }
+
+        // 6. Address
+        const addrSection = document.getElementById('pdpAddressSection');
+        const addrEl = document.getElementById('pdpAddress');
+        if (addrSection && addrEl) {
+          if (stop.formatted_address) {
+            addrEl.innerText = stop.formatted_address;
+            addrSection.style.display = 'flex';
+          } else {
+            addrSection.style.display = 'none';
+          }
+        }
+
+        // 7. Editorial Overview (place_notes)
+        const aboutSection = document.getElementById('pdpAboutSection');
+        const aboutEl = document.getElementById('pdpAbout');
+        if (aboutSection && aboutEl) {
+          if (stop.place_notes) {
+            aboutEl.innerText = stop.place_notes;
+            aboutSection.style.display = 'flex';
+          } else {
+            aboutSection.style.display = 'none';
+          }
+        }
+
+        // 8. Trip Notes & Tips (user_notes)
+        const notesSection = document.getElementById('pdpNotesSection');
+        const notesEl = document.getElementById('pdpNotes');
+        if (notesSection && notesEl) {
+          if (stop.user_notes) {
+            notesEl.innerText = stop.user_notes;
+            notesSection.style.display = 'flex';
+          } else {
+            notesSection.style.display = 'none';
+          }
+        }
+
+        // 9. Transit to Next Stop
+        const transitSection = document.getElementById('pdpTransitSection');
+        const transitEl = document.getElementById('pdpTransit');
+        if (transitSection && transitEl) {
+          const leg = (clientState.transitLegs || []).find((l) => l.from_stop_id === stop.id);
+          if (leg) {
+            const nextStop = (clientState.stops || []).find((s) => s.id === leg.to_stop_id);
+            const distKm = (leg.distance_meters / 1000).toFixed(1);
+            const durationMin = Math.round(leg.duration_seconds / 60);
+            transitEl.innerHTML = `
+              <div class="pdp-transit-header">
+                <span class="icon-inline">${BOLT_SVG_INLINE}</span>
+                <span>To ${nextStop ? nextStop.place_name : 'Next Stop'}: ${distKm} km · ${durationMin} min (${leg.transit_mode || 'transit'})</span>
+              </div>
+              ${leg.route_instructions ? `<div class="pdp-transit-inst">${leg.route_instructions}</div>` : ''}
+            `;
+            transitSection.style.display = 'flex';
+          } else {
+            transitSection.style.display = 'none';
+          }
+        }
+
+        panel.classList.add('open');
+      }
+
+      function closePlaceDetail() {
+        const panel = document.getElementById('placeDetailPanel');
+        if (panel) panel.classList.remove('open');
+      }
+
+      window.openPlaceDetail = openPlaceDetail;
+      window.closePlaceDetail = closePlaceDetail;
+
+      // Close place details on Escape key
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closePlaceDetail();
+      });
+
+      // AI Chat Pane toggle
+      function toggleChatPane() {
+        const chatPane = document.querySelector('.pane-chat');
+        const toggleBtn = document.getElementById('aiAssistantToggle');
+        if (!chatPane) return;
+        const isCollapsed = chatPane.classList.toggle('collapsed');
+        saveUiState('chatCollapsed', isCollapsed);
+        if (toggleBtn) {
+          if (isCollapsed) {
+            toggleBtn.classList.remove('active');
+          } else {
+            toggleBtn.classList.add('active');
+          }
+        }
+        if (mapInstance) {
+          setTimeout(() => mapInstance.invalidateSize(), 260);
+        }
+      }
+      window.toggleChatPane = toggleChatPane;
 
       // 3. Tab Click: switches view and persists to /api/v1/session (normalizes 'bookings' <-> 'reservations')
       function handleTabClick(tabName, el) {
@@ -3122,6 +3714,30 @@ const initialClientData = {
           : document.querySelectorAll('.day-pill')[dayNum];
         if (activePill) activePill.classList.add('active');
 
+        // Filter day cards in the canvas
+        document.querySelectorAll('.day-card').forEach((card) => {
+          const cDay = parseInt(card.getAttribute('data-day-number'), 10);
+          if (dayVal === 'all' || cDay === dayNum) {
+            card.style.display = 'block';
+          } else {
+            card.style.display = 'none';
+          }
+        });
+
+        // Update Day Filter Banner
+        const banner = document.getElementById('dayFilterBanner');
+        const bannerText = document.getElementById('dayFilterText');
+        if (banner && bannerText) {
+          if (dayVal === 'all') {
+            banner.style.display = 'none';
+          } else {
+            const dayObj = (clientState.days || []).find((d) => d.day_number === dayNum);
+            const stopCount = (clientState.stops || []).filter((s) => s.day_id === dayObj?.id).length;
+            bannerText.innerText = `Viewing Day ${dayNum}${dayObj?.date ? ' (' + dayObj.date + ')' : ''} · ${stopCount} stop${stopCount === 1 ? '' : 's'}`;
+            banner.style.display = 'flex';
+          }
+        }
+
         saveUiState('activeDay', dayNum);
         persistSession({
           active_day_number: dayNum,
@@ -3133,21 +3749,18 @@ const initialClientData = {
       // Sticky Day Pill Select handler
       function handleDayPillSelect(dayNum, btn) {
         document.querySelectorAll('.day-pill').forEach((p) => p.classList.remove('active'));
-        if (btn) btn.classList.add('active');
+        if (btn) {
+          btn.classList.add('active');
+        } else {
+          const pill = dayNum === 'all'
+            ? document.querySelector('.day-pill:first-child')
+            : document.querySelectorAll('.day-pill')[dayNum];
+          if (pill) pill.classList.add('active');
+        }
         const dayVal = dayNum === 'all' ? 'all' : String(dayNum);
         const filterSelect = document.getElementById('mapDayFilter');
         if (filterSelect) filterSelect.value = dayVal;
         handleDayFilterChange(dayVal);
-
-        if (dayNum !== 'all') {
-          const targetCard = document.getElementById(`day-card-${dayNum}`);
-          if (targetCard) {
-            targetCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          }
-        } else {
-          const canvas = document.querySelector('.pane-canvas');
-          if (canvas) canvas.scrollTo({ top: 0, behavior: 'smooth' });
-        }
       }
 
       // 5. Trip Change: persists to /api/v1/session then updates URL
