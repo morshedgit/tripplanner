@@ -98,10 +98,8 @@ describe('Issue #27: 2026 Spatial Travel Workspace UI Redesign', () => {
     expect(indexContent).toContain('collab-balance-card');
   });
 
-  it('6. Utilizes CartoDB Voyager Retina tile layer, dual-stroke polylines, and teardrop pins', () => {
-    expect(indexContent).toContain('basemaps.cartocdn.com/rastertiles/voyager');
-    expect(indexContent).toContain('subdomains: \'abcd\'');
-    expect(indexContent).toContain('detectRetina: true');
+  it('6. Utilizes ESRI Canvas Light Gray tile layer, dual-stroke polylines, and teardrop pins', () => {
+    expect(indexContent).toContain('server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}');
     expect(indexContent).toContain('map-retina-pin');
     expect(indexContent).toContain('custom-map-pin');
     expect(indexContent).toContain('casing = L.polyline');
@@ -122,5 +120,19 @@ describe('Issue #27: 2026 Spatial Travel Workspace UI Redesign', () => {
     expect(indexContent).toContain('header-dropdown-menu');
     expect(indexContent).toContain('OpenAPI Specification');
     expect(indexContent).toContain('ChatGPT / AI Plugin');
+  });
+
+  it('9. Enforces fixed thumb dimensions via global styles and inline attributes', () => {
+    expect(indexContent).toContain('.stop-thumb {');
+    expect(indexContent).toContain('width: 76px !important;');
+    expect(indexContent).toContain('height: 76px !important;');
+    expect(indexContent).toContain('.booking-thumb {');
+    expect(indexContent).toContain('width: 80px !important;');
+    expect(indexContent).toContain('height: 80px !important;');
+    expect(indexContent).toContain('<style is:global>');
+    expect(indexContent).toContain('width="76"');
+    expect(indexContent).toContain('height="76"');
+    expect(indexContent).toContain('width="80"');
+    expect(indexContent).toContain('height="80"');
   });
 });

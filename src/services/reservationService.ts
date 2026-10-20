@@ -169,6 +169,64 @@ export async function createReservation(
 }
 
 /**
+ * Resolves sensible coordinates for a reservation's stop place.
+ * Evaluates reservation location and title, followed by trip destination,
+ * existing valid places in the trip, and sensible defaults.
+ */
+export async function resolveReservationCoordinates(
+  db: DatabaseAdapter,
+  tripId: string,
+  res: { title: string; location: string | null }
+): Promise<{ lat: number; lng: number }> {
+  const matchKeywordCoords = (text: string): { lat: number; lng: number } | null => {
+    const s = text.toLowerCase();
+    if (s.includes('fiumicino') || s.includes('fco')) return { lat: 41.7999, lng: 12.2462 };
+    if (s.includes('rome') || s.includes('roma')) return { lat: 41.9009, lng: 12.4938 };
+    if (s.includes('florence') || s.includes('firenze')) return { lat: 43.7744, lng: 11.2562 };
+    if (s.includes('venice') || s.includes('venezia')) return { lat: 45.4363, lng: 12.3382 };
+    if (s.includes('kyoto')) return { lat: 35.0116, lng: 135.7681 };
+    if (s.includes('tokyo')) return { lat: 35.6762, lng: 139.6503 };
+    if (s.includes('paris')) return { lat: 48.8566, lng: 2.3522 };
+    if (s.includes('milan') || s.includes('milano')) return { lat: 45.4642, lng: 9.1900 };
+    if (s.includes('london')) return { lat: 51.5074, lng: -0.1278 };
+    if (s.includes('new york') || s.includes('nyc')) return { lat: 40.7128, lng: -74.0060 };
+    return null;
+  };
+
+  // 1. Check reservation location and title
+  const resText = `${res.location || ''} ${res.title}`;
+  const resMatch = matchKeywordCoords(resText);
+  if (resMatch) return resMatch;
+
+  // 2. Query trip's destination
+  const trip = await db.queryOne<{ destination: string }>(
+    'SELECT destination FROM trips WHERE id = ?',
+    [tripId]
+  );
+  if (trip?.destination) {
+    const destMatch = matchKeywordCoords(trip.destination);
+    if (destMatch) return destMatch;
+  }
+
+  // 3. Fallback to existing places in that trip
+  const existingPlace = await db.queryOne<{ lat: number; lng: number }>(
+    `SELECT p.lat, p.lng
+     FROM places p
+     JOIN stops s ON s.place_id = p.id
+     JOIN sections sec ON sec.id = s.section_id
+     WHERE sec.trip_id = ? AND (p.lat != 0.0 OR p.lng != 0.0)
+     LIMIT 1`,
+    [tripId]
+  );
+  if (existingPlace && (existingPlace.lat !== 0 || existingPlace.lng !== 0)) {
+    return { lat: existingPlace.lat, lng: existingPlace.lng };
+  }
+
+  // 4. Default fallback
+  return { lat: 41.9009, lng: 12.4938 };
+}
+
+/**
  * Internal helper to automatically create check-in / arrival stops for reservations.
  */
 async function autoCreateStopsForReservation(
@@ -185,6 +243,7 @@ async function autoCreateStopsForReservation(
     cost: number;
   }
 ): Promise<void> {
+  const coords = await resolveReservationCoordinates(db, tripId, res);
   const startDateStr = res.start_time.split('T')[0];
 
   // Look for matching calendar Day for the start date
@@ -247,8 +306,8 @@ async function autoCreateStopsForReservation(
 
       await db.execute(
         `INSERT INTO places (id, name, formatted_address, lat, lng, category, rating, notes, created_at, updated_at)
-         VALUES (?, ?, ?, 0.0, 0.0, ?, NULL, ?, datetime('now'), datetime('now'))`,
-        [placeId, placeName, placeAddress, placeCategory, `Created for reservation ${res.id}`]
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?, datetime('now'), datetime('now'))`,
+        [placeId, placeName, placeAddress, coords.lat, coords.lng, placeCategory, `Created for reservation ${res.id}`]
       );
 
       // Create Stop
@@ -308,8 +367,8 @@ async function autoCreateStopsForReservation(
           const placeId = generateId('place');
           await db.execute(
             `INSERT INTO places (id, name, formatted_address, lat, lng, category, rating, notes, created_at, updated_at)
-             VALUES (?, ?, ?, 0.0, 0.0, 'lodging', NULL, ?, datetime('now'), datetime('now'))`,
-            [placeId, res.title, res.location || res.title, `Check-out location for reservation ${res.id}`]
+             VALUES (?, ?, ?, ?, ?, 'lodging', NULL, ?, datetime('now'), datetime('now'))`,
+            [placeId, res.title, res.location || res.title, coords.lat, coords.lng, `Check-out location for reservation ${res.id}`]
           );
 
           const maxSortRow = await db.queryOne<{ max_sort: number | null }>(

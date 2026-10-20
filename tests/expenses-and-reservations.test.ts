@@ -183,6 +183,65 @@ describe('Issue #4: Reservations Ledger, Multi-Currency Expenses & Splitwise Deb
       const stopCountAfter = (await db.queryOne<{ count: number }>('SELECT COUNT(*) as count FROM stops'))!.count;
       expect(stopCountAfter).toBe(stopCountBefore);
     });
+
+    it('assigns realistic coordinates when auto-creating reservation stops', async () => {
+      // 1. Rome test
+      await createReservation(db, TRIP_ID, {
+        type: 'flight',
+        title: 'Flight to Rome FCO (Fiumicino)',
+        location: 'Leonardo da Vinci-Fiumicino Airport',
+        start_time: '2026-11-01T14:00:00Z',
+        cost: 650,
+        auto_create_stops: true,
+      });
+
+      const fcoPlace = await db.queryOne<any>(
+        `SELECT p.* FROM places p
+         JOIN stops s ON s.place_id = p.id
+         WHERE s.user_notes LIKE '%Flight to Rome FCO%'`
+      );
+      expect(fcoPlace).not.toBeNull();
+      expect(fcoPlace.lat).toBe(41.7999);
+      expect(fcoPlace.lng).toBe(12.2462);
+
+      // 2. Florence test
+      await createReservation(db, TRIP_ID, {
+        type: 'lodging',
+        title: 'Hotel Brunelleschi Firenze',
+        location: 'Florence Historic Center',
+        start_time: '2026-11-02T15:00:00Z',
+        cost: 450,
+        auto_create_stops: true,
+      });
+
+      const florencePlace = await db.queryOne<any>(
+        `SELECT p.* FROM places p
+         JOIN stops s ON s.place_id = p.id
+         WHERE s.user_notes LIKE '%Hotel Brunelleschi Firenze%'`
+      );
+      expect(florencePlace).not.toBeNull();
+      expect(florencePlace.lat).toBe(43.7744);
+      expect(florencePlace.lng).toBe(11.2562);
+
+      // 3. Fallback to trip destination (Kyoto seeded trip)
+      await createReservation(db, TRIP_ID, {
+        type: 'activity',
+        title: 'Traditional Tea Ceremony Experience',
+        start_time: '2026-11-03T10:00:00Z',
+        cost: 80,
+        auto_create_stops: true,
+      });
+
+      const teaPlace = await db.queryOne<any>(
+        `SELECT p.* FROM places p
+         JOIN stops s ON s.place_id = p.id
+         WHERE s.user_notes LIKE '%Traditional Tea Ceremony Experience%'`
+      );
+      expect(teaPlace).not.toBeNull();
+      // Should resolve to Kyoto coordinates (35.0116, 135.7681) because trip destination is Kyoto
+      expect(teaPlace.lat).toBe(35.0116);
+      expect(teaPlace.lng).toBe(135.7681);
+    });
   });
 
   // ==========================================================================
