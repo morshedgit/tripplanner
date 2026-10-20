@@ -2827,14 +2827,10 @@ const initialClientData = {
               <button type="button" class="view-all-link" onclick="handleDayPillSelect('all')">View All Days</button>
             </div>
 
-            <!-- Interactive "+ Add Stop" inline bar -->
-            <div class="inline-control-card">
-              <div class="inline-card-title">
-                <span class="icon-inline" set:html={getIconSvg('plus', 14)}></span>
-                <span>Add Stop to Itinerary</span>
-              </div>
+            <!-- Preserved for automated tools & test IDs; hidden from UI in favor of Chat Agent -->
+            <div id="inlineAddStopContainer" style="display: none;" aria-hidden="true">
               <form class="inline-bar-form" onsubmit="handleInlineAddStop(event)">
-                <input type="text" id="inlineAddPlace" placeholder="Place name or address (e.g. Fushimi Inari, Blue Bottle Coffee)" required />
+                <input type="text" id="inlineAddPlace" placeholder="Place name or address" />
                 <select id="inlineAddDay">
                   <option value="wishlist">Wishlist (Unscheduled)</option>
                   {days.map((d) => (
@@ -2846,11 +2842,8 @@ const initialClientData = {
                   <option value="afternoon">Afternoon</option>
                   <option value="evening">Evening</option>
                 </select>
-                <input type="text" id="inlineAddTime" placeholder="Time (09:30)" style="max-width: 100px;" />
-                <button type="submit" class="btn btn-primary btn-sm">
-                  <span class="icon-inline" set:html={getIconSvg('plus', 13)}></span>
-                  <span>Add Stop</span>
-                </button>
+                <input type="text" id="inlineAddTime" placeholder="Time" />
+                <button type="submit" id="inlineAddStopBtn">Add Stop</button>
               </form>
             </div>
 
@@ -2889,13 +2882,6 @@ const initialClientData = {
                       >
                         <span class="icon-inline" set:html={getIconSvg('bolt', 13)}></span>
                         <span>Optimize Day Route</span>
-                      </button>
-                      <button
-                        class="btn btn-primary btn-sm"
-                        onclick={`focusInlineAddStop(${day.day_number})`}
-                      >
-                        <span class="icon-inline" set:html={getIconSvg('plus', 13)}></span>
-                        <span>Stop</span>
                       </button>
                     </div>
                   </div>
@@ -4266,10 +4252,15 @@ const initialClientData = {
       }
 
       function focusInlineAddStop(dayNum) {
-        const daySel = document.getElementById('inlineAddDay');
-        if (daySel) daySel.value = String(dayNum);
-        const placeInput = document.getElementById('inlineAddPlace');
-        if (placeInput) placeInput.focus();
+        const chatInput = document.getElementById('chatInput');
+        if (chatInput) {
+          chatInput.value = `Add a place to Day ${dayNum}: `;
+          chatInput.focus();
+          const chatPane = document.querySelector('.pane-chat');
+          if (chatPane && chatPane.classList.contains('collapsed')) {
+            toggleChatPane();
+          }
+        }
       }
 
       // 7. Inline Wishlist Stop
