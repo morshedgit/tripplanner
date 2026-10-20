@@ -5,6 +5,10 @@ dist/
 .worktrees/
 data/*.db*
 data/*.db
+*.db
+*.db-journal
+__pycache__/
+*.pyc
 data/store.json
 .env
 .env.*
