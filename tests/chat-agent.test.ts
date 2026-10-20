@@ -288,6 +288,19 @@ describe('Chat Agent Service & Conversational Engine (Issue #6)', () => {
       expect(res.reply).toContain('Day transit summary');
     });
 
+    it('Action 11: audits traveler safety, cash requirements, and transit cutoffs', async () => {
+      const tripId = 'trip-kyoto-2026';
+      const res = await processChatMessage(db, {
+        trip_id: tripId,
+        message: 'Check safety and cutoffs for Day 1',
+      });
+
+      expect(res.actions_taken[0].tool).toBe('audit_safety');
+      expect(res.reply).toContain('Traveler Safety & Feasibility Audit');
+      expect(res.reply).toContain('Pacing & Energy');
+      expect(res.reply).toContain('Show Taxi Driver');
+    });
+
     it('General chat: returns welcoming prompt suggestions', async () => {
       const tripId = 'trip-kyoto-2026';
       const res = await processChatMessage(db, {

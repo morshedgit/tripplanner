@@ -11,3 +11,4 @@ data/store.json
 !.env.example
 *.log
 .DS_Store
+scratch/

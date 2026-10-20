@@ -1770,6 +1770,7 @@ interface ParsedIntent {
     | 'manage_checklist'
     | 'summarize_itinerary'
     | 'navigate_session'
+    | 'audit_safety'
     | 'general_chat';
   params: any;
 }
@@ -2000,6 +2001,16 @@ export function parseNaturalLanguageIntent(
     };
   }
 
+  // 10. Traveler Safety & Feasibility Audit: "Check safety", "safety audit", "any cutoffs?", "luggage advice", "weather backup"
+  if (/safety|cutoff|last\s+entry|closing\s+time|luggage\s+plan|lockers?|weather\s+backup|pacing/i.test(msg)) {
+    const dayMatch = msg.match(/day\s+(\d+)/i);
+    const dayNumber = dayMatch ? parseInt(dayMatch[1], 10) : sessionContext?.activeDayNumber;
+    return {
+      intent: 'audit_safety',
+      params: { dayNumber },
+    };
+  }
+
   return {
     intent: 'general_chat',
     params: { message: msg },
@@ -2202,6 +2213,61 @@ export async function processChatMessage(
       const res = await executeSummarizeItinerary(db, activeTripId, parsed.params.dayNumber);
       actionsTaken.push(...res.actions);
       reply = res.reply;
+      break;
+    }
+
+    case 'audit_safety': {
+      if (!activeTripId) {
+        reply = "No active trip found to audit. Ask me to plan a trip!";
+        break;
+      }
+      const { auditDaySafety } = await import('../lib/travelerSafety');
+      const days = await db.query<any>('SELECT * FROM days WHERE trip_id = ? ORDER BY day_number ASC', [activeTripId]);
+      const stops = await db.query<any>(
+        `SELECT s.*, p.name as place_name, sec.day_id, sec.section_type
+         FROM stops s
+         JOIN places p ON s.place_id = p.id
+         JOIN sections sec ON s.section_id = sec.id
+         WHERE sec.trip_id = ?
+         ORDER BY s.sort_order ASC`,
+        [activeTripId]
+      );
+      const legs = await db.query<any>('SELECT * FROM transit_legs WHERE trip_id = ?', [activeTripId]);
+
+      const targetDay = parsed.params.dayNumber
+        ? days.find((d: any) => d.day_number === parsed.params.dayNumber)
+        : (sessionContext?.activeDayNumber ? days.find((d: any) => d.day_number === sessionContext.activeDayNumber) : days[0]);
+
+      const targetStops = targetDay ? stops.filter((s: any) => s.day_id === targetDay.id) : stops;
+      const targetLegs = targetDay ? legs.filter((l: any) => targetStops.some((s: any) => s.id === l.from_stop_id)) : legs;
+      const audit = auditDaySafety(targetStops, targetDay?.date || 'today', targetLegs);
+
+      let rep = `### [Safety Audit] Traveler Safety & Feasibility Audit${targetDay ? ` (Day ${targetDay.day_number})` : ''}\n\n`;
+      rep += `• **Pacing & Energy**: ~${audit.totalEstimatedSteps.toLocaleString()} walking steps (**${audit.pacingLevel}** pacing). Comfortable footwear recommended!\n`;
+      if (audit.cashOnlyCount > 0) {
+        rep += `• **Cash Needed**: ${audit.cashOnlyCount} stop(s) require Japanese Yen cash (${audit.cashOnlyPlaces.join(', ')}). Withdraw cash at 7-Eleven or Post Bank ATM.\n`;
+      } else {
+        rep += `• **Payment**: Credit cards & IC transport cards accepted across all scheduled stops.\n`;
+      }
+      if (audit.closingWarnings.length > 0) {
+        rep += `• **Cutoff Warnings**:\n${audit.closingWarnings.map((w: string) => `  - ${w}`).join('\n')}\n`;
+      } else {
+        rep += `• **Hours & Cutoffs**: Operating hours and arrival times are well aligned.\n`;
+      }
+      if (audit.reservationsRequired.length > 0) {
+        rep += `• **Advance Bookings**: ${audit.reservationsRequired.join(', ')} require advance timed reservations.\n`;
+      }
+      if (audit.luggageTips.length > 0) {
+        rep += `• **Luggage**: ${audit.luggageTips.join(' ')}\n`;
+      }
+      rep += `\n*Tip: Tap any stop card on the canvas to open the instant **Show Taxi Driver** card in native script, station exits, and coin locker tips!*`;
+
+      reply = rep;
+      actionsTaken.push({
+        tool: 'audit_safety',
+        summary: `Audited traveler safety and operational cutoffs for Day ${targetDay?.day_number || 1}`,
+        payload: { dayNumber: targetDay?.day_number, totalSteps: audit.totalEstimatedSteps, cashOnly: audit.cashOnlyCount },
+      });
       break;
     }
 
