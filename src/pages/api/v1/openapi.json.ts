@@ -414,6 +414,7 @@ export function generateOpenApiSpec(origin: string = 'http://localhost:4321') {
                   properties: {
                     target_section_id: { type: 'string' },
                     new_sort_order: { type: 'integer' },
+                    target_index: { type: 'integer' },
                   },
                 },
               },
@@ -425,6 +426,74 @@ export function generateOpenApiSpec(origin: string = 'http://localhost:4321') {
               content: {
                 'application/json': {
                   schema: { $ref: '#/components/schemas/StopDetail' },
+                },
+              },
+            },
+          },
+        },
+      },
+
+      '/api/v1/trips/{tripId}/stops/{stopId}/vote': {
+        post: {
+          operationId: 'voteOnTripStop',
+          summary: 'Vote on an itinerary or wishlist stop',
+          description: 'Records or updates an upvote or downvote from a trip collaborator on a planned or wishlist stop.',
+          parameters: [
+            { name: 'tripId', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'stopId', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['vote'],
+                  properties: {
+                    collaborator_id: { type: 'string', nullable: true },
+                    collaborator_name: { type: 'string', nullable: true },
+                    vote: {
+                      oneOf: [
+                        { type: 'integer', enum: [1, -1] },
+                        { type: 'string', enum: ['up', 'down'] },
+                      ],
+                    },
+                    comment: { type: 'string', nullable: true },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Vote recorded',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      stop_id: { type: 'string' },
+                      upvotes: { type: 'integer' },
+                      downvotes: { type: 'integer' },
+                      net_score: { type: 'integer' },
+                    },
+                  },
+                },
+              },
+            },
+            '400': {
+              description: 'Validation error',
+              content: {
+                'application/problem+json': {
+                  schema: { $ref: '#/components/schemas/ProblemDetails' },
+                },
+              },
+            },
+            '404': {
+              description: 'Stop or trip not found',
+              content: {
+                'application/problem+json': {
+                  schema: { $ref: '#/components/schemas/ProblemDetails' },
                 },
               },
             },
@@ -467,6 +536,149 @@ export function generateOpenApiSpec(origin: string = 'http://localhost:4321') {
               content: {
                 'application/json': {
                   schema: { $ref: '#/components/schemas/DaySchedule' },
+                },
+              },
+            },
+          },
+        },
+      },
+
+      '/api/v1/trips/{tripId}/days/{dayNumber}/optimize-route': {
+        post: {
+          operationId: 'optimizeDayRouteByNumber',
+          summary: 'Optimize daily route order by day number',
+          description:
+            'Applies Nearest-Neighbor + 2-opt TSP route optimization to minimize travel distance and transit times for a 1-indexed trip day.',
+          parameters: [
+            { name: 'tripId', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'dayNumber', in: 'path', required: true, schema: { type: 'integer', minimum: 1 } },
+          ],
+          requestBody: {
+            required: false,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    transit_mode: {
+                      type: 'string',
+                      enum: ['walking', 'transit', 'driving', 'bicycling'],
+                      default: 'walking',
+                    },
+                    fix_first_stop: { type: 'boolean', default: true },
+                    fix_last_stop: { type: 'boolean', default: false },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Optimized day schedule and distance/time savings',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/DaySchedule' },
+                },
+              },
+            },
+            '404': {
+              description: 'Trip or day not found',
+              content: {
+                'application/problem+json': {
+                  schema: { $ref: '#/components/schemas/ProblemDetails' },
+                },
+              },
+            },
+          },
+        },
+      },
+
+      '/api/v1/trips/{tripId}/diorama': {
+        get: {
+          operationId: 'getTripDiorama',
+          summary: 'Get 2.5D isometric diorama status or render',
+          description:
+            'Returns cached diorama render status, normalized waypoints, callouts, and safety metrics for a trip day, or triggers a render when render=true.',
+          parameters: [
+            { name: 'tripId', in: 'path', required: true, schema: { type: 'string' } },
+            {
+              name: 'day',
+              in: 'query',
+              required: false,
+              schema: { type: 'integer', default: 1, minimum: 1 },
+              description: '1-indexed day number to inspect or render.',
+            },
+            {
+              name: 'render',
+              in: 'query',
+              required: false,
+              schema: { type: 'boolean', default: false },
+              description: 'If true, renders the diorama synchronously before returning metadata.',
+            },
+            {
+              name: 'quality',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['draft', 'standard', 'high'], default: 'standard' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Diorama metadata or current status payload',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/DioramaMetadata' },
+                },
+              },
+            },
+            '500': {
+              description: 'Diorama service error',
+              content: {
+                'application/problem+json': {
+                  schema: { $ref: '#/components/schemas/ProblemDetails' },
+                },
+              },
+            },
+          },
+        },
+        post: {
+          operationId: 'renderTripDiorama',
+          summary: 'Render 2.5D isometric diorama via Blender Cycles',
+          description:
+            'Generates a 2.5D isometric diorama PNG using headless Blender 5.x Cycles Metal GPU rendering with destination archetypes and itinerary waypoints.',
+          parameters: [
+            { name: 'tripId', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          requestBody: {
+            required: false,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    day_number: { type: 'integer', default: 1, minimum: 1 },
+                    day: { type: 'integer', minimum: 1 },
+                    quality: { type: 'string', enum: ['draft', 'standard', 'high'], default: 'standard' },
+                    force: { type: 'boolean', default: true },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'Diorama rendered successfully',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/DioramaMetadata' },
+                },
+              },
+            },
+            '500': {
+              description: 'Diorama render failed',
+              content: {
+                'application/problem+json': {
+                  schema: { $ref: '#/components/schemas/ProblemDetails' },
                 },
               },
             },
@@ -535,6 +747,94 @@ export function generateOpenApiSpec(origin: string = 'http://localhost:4321') {
               content: {
                 'application/json': {
                   schema: { $ref: '#/components/schemas/Reservation' },
+                },
+              },
+            },
+          },
+        },
+      },
+
+      '/api/v1/trips/{tripId}/reservations/{reservationId}': {
+        patch: {
+          operationId: 'updateReservation',
+          summary: 'Update a travel reservation',
+          description: 'Updates fields on an existing flight, lodging, rental car, or activity reservation.',
+          parameters: [
+            { name: 'tripId', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'reservationId', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    type: {
+                      type: 'string',
+                      enum: ['flight', 'lodging', 'rental_car', 'activity', 'restaurant', 'other'],
+                    },
+                    title: { type: 'string' },
+                    confirmation_code: { type: 'string', nullable: true },
+                    provider: { type: 'string', nullable: true },
+                    start_time: { type: 'string', format: 'date-time' },
+                    end_time: { type: 'string', format: 'date-time', nullable: true },
+                    location: { type: 'string', nullable: true },
+                    cost: { type: 'number' },
+                    currency: { type: 'string' },
+                    notes: { type: 'string', nullable: true },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Reservation updated',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/Reservation' },
+                },
+              },
+            },
+            '404': {
+              description: 'Reservation not found',
+              content: {
+                'application/problem+json': {
+                  schema: { $ref: '#/components/schemas/ProblemDetails' },
+                },
+              },
+            },
+          },
+        },
+        delete: {
+          operationId: 'deleteReservation',
+          summary: 'Delete a travel reservation',
+          description: 'Deletes a travel reservation from the trip.',
+          parameters: [
+            { name: 'tripId', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'reservationId', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': {
+              description: 'Reservation deleted',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      success: { type: 'boolean' },
+                      deleted_reservation_id: { type: 'string' },
+                    },
+                  },
+                },
+              },
+            },
+            '404': {
+              description: 'Reservation not found',
+              content: {
+                'application/problem+json': {
+                  schema: { $ref: '#/components/schemas/ProblemDetails' },
                 },
               },
             },
@@ -628,6 +928,36 @@ export function generateOpenApiSpec(origin: string = 'http://localhost:4321') {
               content: {
                 'application/json': {
                   schema: { $ref: '#/components/schemas/BudgetSettlement' },
+                },
+              },
+            },
+          },
+        },
+      },
+
+      '/api/v1/trips/{tripId}/budget/settle-up': {
+        get: {
+          operationId: 'settleUpBudget',
+          summary: 'Get budget settlement transfers and balances',
+          description:
+            'Computes individual collaborator net balances and minimal Splitwise-style debt settlement transfers.',
+          parameters: [
+            { name: 'tripId', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': {
+              description: 'Debt settlement calculation',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/BudgetSettlement' },
+                },
+              },
+            },
+            '404': {
+              description: 'Trip not found',
+              content: {
+                'application/problem+json': {
+                  schema: { $ref: '#/components/schemas/ProblemDetails' },
                 },
               },
             },
@@ -808,6 +1138,291 @@ export function generateOpenApiSpec(origin: string = 'http://localhost:4321') {
                         items: { type: 'object' },
                       },
                     },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+
+      '/api/v1/session': {
+        get: {
+          operationId: 'getSessionContext',
+          summary: 'Get live workspace session state',
+          description:
+            'Retrieves the synchronized UI session state including active_trip_id, active_day_number, active_tab, selected_stop_id, recent events, and optionally the populated active trip data.',
+          parameters: [
+            {
+              name: 'session_id',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', default: 'default' },
+              description: 'Workspace session identifier.',
+            },
+            {
+              name: 'include_trip',
+              in: 'query',
+              required: false,
+              schema: { type: 'boolean', default: true },
+              description: 'Whether to embed the full active trip, expenses, and settlement payload.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Current live workspace session state',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/SessionStateResult' },
+                },
+              },
+            },
+            '500': {
+              description: 'Session retrieve error',
+              content: {
+                'application/problem+json': {
+                  schema: { $ref: '#/components/schemas/ProblemDetails' },
+                },
+              },
+            },
+          },
+        },
+        post: {
+          operationId: 'updateSessionState',
+          summary: 'Update live workspace session state',
+          description:
+            'Updates active trip, day, tab, or selected stop and increments state_version for bi-directional synchronization between the Web UI and Antigravity (agy).',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    session_id: { type: 'string', default: 'default' },
+                    ui_action: {
+                      type: 'string',
+                      enum: ['select_trip', 'select_day', 'select_tab', 'select_stop'],
+                      description: 'Optional UI quick-mutation action shortcut.',
+                    },
+                    active_trip_id: { type: 'string' },
+                    trip_id: { type: 'string' },
+                    active_day_number: { type: 'integer', nullable: true },
+                    day_number: { type: 'integer', nullable: true },
+                    active_tab: {
+                      type: 'string',
+                      enum: ['itinerary', 'wishlist', 'bookings', 'budget', 'checklists', 'notes'],
+                    },
+                    tab: { type: 'string' },
+                    selected_stop_id: { type: 'string', nullable: true },
+                    stop_id: { type: 'string', nullable: true },
+                    actor: { type: 'string', enum: ['ui', 'agy', 'chat', 'system'], default: 'ui' },
+                    event_summary: { type: 'string' },
+                    summary: { type: 'string' },
+                    action: { type: 'string' },
+                    ui_context: { type: 'object' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Updated session state',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/SessionStateResult' },
+                },
+              },
+            },
+            '400': {
+              description: 'Invalid request body',
+              content: {
+                'application/problem+json': {
+                  schema: { $ref: '#/components/schemas/ProblemDetails' },
+                },
+              },
+            },
+          },
+        },
+      },
+
+      '/api/v1/events': {
+        get: {
+          operationId: 'streamSessionEvents',
+          summary: 'Stream or poll real-time workspace session events',
+          description:
+            'Real-time synchronization endpoint supporting Server-Sent Events (SSE via Accept: text/event-stream or ?stream=true) and JSON version-delta polling.',
+          parameters: [
+            {
+              name: 'session_id',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', default: 'default' },
+            },
+            {
+              name: 'stream',
+              in: 'query',
+              required: false,
+              schema: { type: 'boolean', default: false },
+              description: 'Set true to force text/event-stream SSE output.',
+            },
+            {
+              name: 'since_version',
+              in: 'query',
+              required: false,
+              schema: { type: 'integer', default: 0 },
+              description: 'Last known state_version when using JSON delta polling.',
+            },
+            {
+              name: 'include_trip',
+              in: 'query',
+              required: false,
+              schema: { type: 'boolean', default: true },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'SSE stream of session_state and version events, or JSON delta payload',
+              content: {
+                'text/event-stream': {
+                  schema: {
+                    type: 'string',
+                    description: 'Server-Sent Events stream emitting event: session_state and event: version frames.',
+                  },
+                },
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      has_changes: { type: 'boolean' },
+                      current_version: { type: 'integer' },
+                      session: { $ref: '#/components/schemas/WorkspaceSession' },
+                      events: {
+                        type: 'array',
+                        items: { $ref: '#/components/schemas/SessionEvent' },
+                      },
+                      active_trip: { type: 'object', nullable: true },
+                    },
+                  },
+                },
+              },
+            },
+            '500': {
+              description: 'Events synchronization error',
+              content: {
+                'application/problem+json': {
+                  schema: { $ref: '#/components/schemas/ProblemDetails' },
+                },
+              },
+            },
+          },
+        },
+        post: {
+          operationId: 'recordSessionEvent',
+          summary: 'Record a session mutation event',
+          description: 'Records an explicit session mutation event from the UI, chat agent, or Antigravity CLI.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['action'],
+                  properties: {
+                    session_id: { type: 'string', default: 'default' },
+                    trip_id: { type: 'string' },
+                    actor: { type: 'string', enum: ['ui', 'agy', 'chat', 'system'], default: 'agy' },
+                    action: { type: 'string' },
+                    summary: { type: 'string' },
+                    active_day_number: { type: 'integer', nullable: true },
+                    active_tab: { type: 'string' },
+                    selected_stop_id: { type: 'string', nullable: true },
+                    payload: { type: 'object' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'Session mutation recorded',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      event: { $ref: '#/components/schemas/SessionEvent' },
+                      session: { $ref: '#/components/schemas/WorkspaceSession' },
+                      state: { $ref: '#/components/schemas/SessionStateResult' },
+                    },
+                  },
+                },
+              },
+            },
+            '400': {
+              description: 'Missing action or invalid JSON',
+              content: {
+                'application/problem+json': {
+                  schema: { $ref: '#/components/schemas/ProblemDetails' },
+                },
+              },
+            },
+          },
+        },
+      },
+
+      '/api/v1/mcp': {
+        get: {
+          operationId: 'getMcpServerInfo',
+          summary: 'Discover TripPlanner MCP server capabilities',
+          description:
+            'Returns Model Context Protocol (MCP) server discovery metadata, supported transports, registered tools, resources, and Antigravity (agy) configuration instructions.',
+          responses: {
+            '200': {
+              description: 'MCP server discovery metadata',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/McpServerInfo' },
+                },
+              },
+            },
+          },
+        },
+        post: {
+          operationId: 'handleMcpRpc',
+          summary: 'Execute MCP JSON-RPC 2.0 request',
+          description:
+            'Streamable HTTP Model Context Protocol (MCP) JSON-RPC 2.0 endpoint supporting single or batch requests (initialize, tools/list, tools/call, resources/list, resources/read).',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  oneOf: [
+                    { $ref: '#/components/schemas/McpRpcRequest' },
+                    {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/McpRpcRequest' },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'JSON-RPC 2.0 response or batch response array',
+              content: {
+                'application/json': {
+                  schema: {
+                    oneOf: [
+                      { $ref: '#/components/schemas/McpRpcResponse' },
+                      {
+                        type: 'array',
+                        items: { $ref: '#/components/schemas/McpRpcResponse' },
+                      },
+                    ],
                   },
                 },
               },
@@ -1017,6 +1632,178 @@ export function generateOpenApiSpec(origin: string = 'http://localhost:4321') {
             suggested_alternatives: {
               type: 'array',
               items: { type: 'string' },
+            },
+          },
+        },
+        WorkspaceSession: {
+          type: 'object',
+          required: ['session_id', 'active_trip_id', 'active_tab', 'last_actor', 'state_version', 'updated_at'],
+          properties: {
+            session_id: { type: 'string' },
+            active_trip_id: { type: 'string' },
+            active_day_number: { type: 'integer', nullable: true },
+            active_tab: { type: 'string' },
+            selected_stop_id: { type: 'string', nullable: true },
+            selected_stop: { $ref: '#/components/schemas/StopDetail', nullable: true },
+            last_actor: { type: 'string', enum: ['ui', 'agy', 'chat', 'system'] },
+            last_event_summary: { type: 'string' },
+            state_version: { type: 'integer' },
+            ui_context: { type: 'object' },
+            updated_at: { type: 'string' },
+          },
+        },
+        SessionEvent: {
+          type: 'object',
+          required: ['id', 'session_id', 'actor', 'action', 'summary', 'state_version', 'created_at'],
+          properties: {
+            id: { type: 'string' },
+            session_id: { type: 'string' },
+            trip_id: { type: 'string', nullable: true },
+            actor: { type: 'string', enum: ['ui', 'agy', 'chat', 'system'] },
+            action: { type: 'string' },
+            summary: { type: 'string' },
+            state_version: { type: 'integer' },
+            payload: { type: 'object' },
+            created_at: { type: 'string' },
+          },
+        },
+        SessionStateResult: {
+          type: 'object',
+          required: ['session', 'recent_events'],
+          properties: {
+            session: { $ref: '#/components/schemas/WorkspaceSession' },
+            recent_events: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/SessionEvent' },
+            },
+            selected_stop: { $ref: '#/components/schemas/StopDetail', nullable: true },
+            trip: { type: 'object', nullable: true },
+          },
+        },
+        DioramaWaypoint: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            lat: { type: 'number' },
+            lng: { type: 'number' },
+            x: { type: 'number' },
+            y: { type: 'number' },
+            z: { type: 'number' },
+            arrival_time: { type: 'string' },
+            category: { type: 'string' },
+          },
+        },
+        DioramaCallout: {
+          type: 'object',
+          properties: {
+            title: { type: 'string' },
+            tag: { type: 'string' },
+            x: { type: 'number' },
+            y: { type: 'number' },
+            z: { type: 'number' },
+          },
+        },
+        DioramaMetadata: {
+          type: 'object',
+          properties: {
+            tripId: { type: 'string' },
+            dayNumber: { type: 'integer' },
+            region: { type: 'string' },
+            exists: { type: 'boolean' },
+            imageUrl: { type: 'string' },
+            filePath: { type: 'string' },
+            width: { type: 'integer' },
+            height: { type: 'integer' },
+            samples: { type: 'integer' },
+            metrics: { type: 'string' },
+            filterLabels: {
+              type: 'array',
+              items: { type: 'string' },
+            },
+            waypointsCount: { type: 'integer' },
+            waypoints: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/DioramaWaypoint' },
+            },
+            callouts: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/DioramaCallout' },
+            },
+            generatedAt: { type: 'string' },
+            cached: { type: 'boolean' },
+          },
+        },
+        McpServerInfo: {
+          type: 'object',
+          required: ['name', 'version', 'protocolVersion', 'transports', 'endpoint', 'tools', 'resources'],
+          properties: {
+            name: { type: 'string', example: 'tripplanner-mcp' },
+            version: { type: 'string', example: '1.0.0' },
+            protocolVersion: { type: 'string', example: '2025-03-26' },
+            transports: {
+              type: 'array',
+              items: { type: 'string' },
+            },
+            endpoint: { type: 'string', example: '/api/v1/mcp' },
+            stdio_bridge: { type: 'string', example: 'scripts/agy-mcp-server.mjs' },
+            capabilities: { type: 'object' },
+            tools: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  description: { type: 'string' },
+                  inputSchema: { type: 'object' },
+                },
+              },
+            },
+            resources: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  uri: { type: 'string' },
+                  name: { type: 'string' },
+                  mimeType: { type: 'string' },
+                  description: { type: 'string' },
+                },
+              },
+            },
+            agy_instructions: { type: 'object' },
+          },
+        },
+        McpRpcRequest: {
+          type: 'object',
+          required: ['jsonrpc', 'method'],
+          properties: {
+            jsonrpc: { type: 'string', enum: ['2.0'], default: '2.0' },
+            id: {
+              oneOf: [{ type: 'string' }, { type: 'integer' }, { type: 'null' }],
+            },
+            method: {
+              type: 'string',
+              example: 'tools/call',
+            },
+            params: { type: 'object' },
+          },
+        },
+        McpRpcResponse: {
+          type: 'object',
+          required: ['jsonrpc', 'id'],
+          properties: {
+            jsonrpc: { type: 'string', enum: ['2.0'] },
+            id: {
+              oneOf: [{ type: 'string' }, { type: 'integer' }, { type: 'null' }],
+            },
+            result: { type: 'object' },
+            error: {
+              type: 'object',
+              properties: {
+                code: { type: 'integer' },
+                message: { type: 'string' },
+                data: {},
+              },
             },
           },
         },
