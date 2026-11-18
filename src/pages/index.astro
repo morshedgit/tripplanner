@@ -82,7 +82,9 @@ if (activeTrip) {
   stops = await db.query<any>(
     `SELECT s.*, p.name as place_name, p.formatted_address, p.lat, p.lng, p.category, p.rating, p.notes as place_notes,
             p.website, p.phone_number, p.google_place_id,
-            sec.day_id, sec.section_type, sec.title as section_title
+            sec.day_id, sec.section_type, sec.title as section_title,
+            (SELECT COALESCE(SUM(CASE WHEN sv.vote_type = 'up' THEN 1 ELSE 0 END), 0) FROM stop_votes sv WHERE sv.stop_id = s.id) as upvotes,
+            (SELECT COALESCE(SUM(CASE WHEN sv.vote_type = 'down' THEN 1 ELSE 0 END), 0) FROM stop_votes sv WHERE sv.stop_id = s.id) as downvotes
      FROM stops s
      JOIN places p ON s.place_id = p.id
      JOIN sections sec ON s.section_id = sec.id
@@ -91,10 +93,13 @@ if (activeTrip) {
     [tripId]
   );
 
-  // Attach thumbnail photo URL and traveler safety metadata to each stop
+  // Attach thumbnail photo URL, traveler safety metadata, and normalized vote counts to each stop
   for (const st of stops) {
     st.thumbnail_url = getPlaceImageUrl(st.place_name, st.category, activeTrip.destination);
     st.safety = getPlaceSafetyMeta(st.place_name, activeTrip.destination);
+    st.upvotes = Number(st.upvotes ?? 0);
+    st.downvotes = Number(st.downvotes ?? 0);
+    st.votes = { up: st.upvotes, down: st.downvotes };
   }
 
   transitLegs = await db.query<TransitLeg>(
@@ -140,7 +145,7 @@ if (activeTrip) {
   }
 
   tripNotes = await db.query<TripNote>(
-    'SELECT * FROM trip_notes WHERE trip_id = ? ORDER BY created_at ASC',
+    'SELECT * FROM trip_notes WHERE trip_id = ? ORDER BY updated_at DESC, created_at DESC',
     [tripId]
   );
 
@@ -969,6 +974,180 @@ const initialClientData = {
         background: rgba(15, 23, 42, 0.5);
         padding: 0.15rem 0.45rem;
         border-radius: 10px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .hero-invite-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        margin-left: 0.45rem;
+        padding: 0.2rem 0.55rem;
+        border-radius: 9999px;
+        font-size: 0.7rem;
+        font-weight: 600;
+        color: #ffffff;
+        background: rgba(37, 99, 235, 0.85);
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        cursor: pointer;
+        transition: transform 0.14s ease, background 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      .hero-invite-btn:hover {
+        transform: translateY(-1px);
+        background: #1d4ed8;
+        box-shadow: 0 4px 12px rgba(15, 23, 42, 0.25);
+      }
+
+      .hero-invite-btn:active {
+        transform: scale(0.98);
+      }
+
+      .hero-invite-btn:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
+      }
+
+      .invite-collaborator-panel {
+        background: #ffffff;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.02);
+        border-radius: 12px;
+        padding: 0.9rem 1.05rem;
+        margin-bottom: 1.25rem;
+      }
+
+      /* Collaborative Notes Tab */
+      .note-editor-card {
+        background: #ffffff;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.02);
+        border-radius: 12px;
+        padding: 1rem 1.15rem;
+        margin-bottom: 1.25rem;
+      }
+
+      .note-editor-form {
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+        margin-top: 0.45rem;
+      }
+
+      .note-editor-form input[type="text"],
+      .note-editor-form textarea {
+        width: 100%;
+        padding: 0.5rem 0.7rem;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+        font-size: 0.85rem;
+        color: #0f172a;
+        background: #f8fafc;
+        outline: none;
+        transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      .note-editor-form textarea {
+        resize: vertical;
+        min-height: 82px;
+        line-height: 1.55;
+      }
+
+      .note-editor-form input[type="text"]:focus,
+      .note-editor-form textarea:focus {
+        background: #ffffff;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+      }
+
+      .note-editor-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .notes-list-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 0.85rem;
+      }
+
+      .note-card {
+        background: #ffffff;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        border-radius: 12px;
+        padding: 1rem 1.15rem;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.02);
+        transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.16s ease, border-color 0.16s ease;
+      }
+
+      .note-card:hover {
+        transform: translateY(-1px);
+        border-color: #cbd5e1;
+        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.07);
+      }
+
+      .note-card-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin-bottom: 0.45rem;
+      }
+
+      .note-card-title {
+        font-size: 0.95rem;
+        font-weight: 600;
+        letter-spacing: -0.015em;
+        color: #0f172a;
+        text-wrap: balance;
+        margin: 0;
+      }
+
+      .note-card-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        flex-shrink: 0;
+      }
+
+      .note-card-body {
+        font-size: 0.85rem;
+        line-height: 1.55;
+        color: #475569;
+        max-width: 65ch;
+        text-wrap: pretty;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .note-card-meta {
+        margin-top: 0.65rem;
+        padding-top: 0.55rem;
+        border-top: 1px solid #f1f5f9;
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        font-size: 0.72rem;
+        font-weight: 500;
+        color: #94a3b8;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .notes-empty-state {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 1.1rem 1.25rem;
+        background: #ffffff;
+        border: 1px dashed #cbd5e1;
+        border-radius: 12px;
+        color: #64748b;
+        font-size: 0.84rem;
+        font-weight: 500;
       }
 
       /* Canvas Tabs: Permanently pinned frosted navigation bar */
@@ -2365,6 +2544,62 @@ const initialClientData = {
         margin-top: 0.5rem;
       }
 
+      .pdp-vote-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.65rem;
+        padding: 0.6rem 0.75rem;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        margin-top: 0.35rem;
+        margin-bottom: 0.65rem;
+      }
+
+      .pdp-vote-label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: #475569;
+      }
+
+      .pdp-vote-buttons {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+      }
+
+      .pdp-vote-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .pdp-vote-btn:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+      }
+
+      .pdp-vote-btn.active-upvote {
+        background: #eff6ff !important;
+        border-color: #93c5fd !important;
+        color: #1d4ed8 !important;
+      }
+
+      .pdp-vote-btn.active-downvote {
+        background: #fef2f2 !important;
+        border-color: #fca5a5 !important;
+        color: #b91c1c !important;
+      }
+
+      .pdp-vote-count {
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-size: 0.76rem;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+
       .pdp-management-actions {
         display: flex;
         align-items: center;
@@ -3318,6 +3553,10 @@ const initialClientData = {
             <span class="icon-inline" set:html={getIconSvg('list-checks', 15)}></span>
             <span>Checklists</span>
           </button>
+          <button data-tab="notes" class={`canvas-tab ${normalizedActiveTab === 'notes' ? 'active' : ''}`} onclick="handleTabClick('notes', this)">
+            <span class="icon-inline" set:html={getIconSvg('file-text', 15)}></span>
+            <span>Notes ({tripNotes.length})</span>
+          </button>
         </nav>
 
         <div class="canvas-content">
@@ -3344,6 +3583,16 @@ const initialClientData = {
                       )
                     ))}
                     <span class="hero-collab-label">{collaborators.length} traveler{collaborators.length === 1 ? '' : 's'}</span>
+                    <button
+                      type="button"
+                      class="hero-invite-btn"
+                      id="inviteCollaboratorToggleBtn"
+                      onclick="toggleInviteCollaboratorPanel()"
+                      title="Invite collaborator to trip"
+                    >
+                      <span class="icon-inline" set:html={getIconSvg('user-plus', 12)}></span>
+                      <span>+ Invite</span>
+                    </button>
                   </div>
                 </div>
 
@@ -3368,6 +3617,28 @@ const initialClientData = {
               </div>
             </div>
           )}
+
+          <!-- Collapsible Collaborator Invitation Panel -->
+          <div id="inviteCollaboratorPanel" class="inline-control-card invite-collaborator-panel" style="display: none;">
+            <div class="inline-card-title">
+              <span class="icon-inline" set:html={getIconSvg('user-plus', 14)}></span>
+              <span>Invite Collaborator to Trip</span>
+            </div>
+            <form class="inline-bar-form" id="inviteCollaboratorForm" onsubmit="handleInviteCollaborator(event)">
+              <input type="text" id="inviteCollabName" placeholder="Full name (e.g. Charlie Kim)" required style="max-width: 190px;" />
+              <input type="email" id="inviteCollabEmail" placeholder="Email address (e.g. charlie@example.com)" required style="min-width: 210px; flex: 1;" />
+              <select id="inviteCollabRole" style="max-width: 115px;">
+                <option value="editor" selected>Editor</option>
+                <option value="viewer">Viewer</option>
+                <option value="owner">Owner</option>
+              </select>
+              <button type="submit" class="btn btn-primary btn-sm" id="inviteCollabSubmitBtn">
+                <span class="icon-inline" set:html={getIconSvg('user-plus', 13)}></span>
+                <span>Send Invite</span>
+              </button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="toggleInviteCollaboratorPanel()">Cancel</button>
+            </form>
+          </div>
 
           <!-- TAB 1: ITINERARY -->
           <div id="tab-itinerary" class="tab-panel" style={normalizedActiveTab === 'itinerary' ? 'display: block;' : 'display: none;'}>
@@ -3710,7 +3981,7 @@ const initialClientData = {
               </form>
             </div>
 
-            <div style="display: flex; flex-direction: column; gap: 0.85rem;">
+            <div id="reservationsListContainer" style="display: flex; flex-direction: column; gap: 0.85rem;">
               {reservations.map((res) => {
                 const resThumb = getPlaceImageUrl(res.title, res.type, activeTrip?.destination);
                 return (
@@ -3755,10 +4026,18 @@ const initialClientData = {
                       </div>
                       {res.notes && <div class="stop-notes">{res.notes}</div>}
                     </div>
-                    <div class="booking-ticket-cost">
+                    <div class="booking-ticket-cost" style="display: flex; align-items: center; gap: 0.45rem;">
                       <span class="badge badge-green cost-badge">
                         {res.currency || activeTrip?.currency || 'USD'} {Number(res.cost || 0).toFixed(2)}
                       </span>
+                      <button
+                        type="button"
+                        class="btn btn-outline btn-sm delete-btn booking-delete-btn"
+                        onclick={`handleDeleteReservation('${res.id}')`}
+                        title="Delete booking"
+                      >
+                        <span class="icon-inline" set:html={getIconSvg('trash', 13)}></span>
+                      </button>
                     </div>
                   </div>
                 );
@@ -4004,6 +4283,89 @@ const initialClientData = {
               ))}
             </div>
           </div>
+
+          <!-- TAB 6: COLLABORATIVE NOTES -->
+          <div id="tab-notes" class="tab-panel" style={normalizedActiveTab === 'notes' ? 'display: block;' : 'display: none;'}>
+            <div class="note-editor-card">
+              <div class="inline-card-title" id="noteFormHeading">
+                <span class="icon-inline" set:html={getIconSvg('file-text', 14)}></span>
+                <span>Collaborative Trip Notes</span>
+              </div>
+              <form class="note-editor-form" id="addNoteForm" onsubmit="handleInlineSaveNote(event)">
+                <input type="hidden" id="noteIdInput" value="" />
+                <input
+                  type="text"
+                  id="noteTitleInput"
+                  placeholder="Note title (e.g. Kansai Airport Transit, Dietary Notes, Packing Reminders)"
+                  required
+                />
+                <textarea
+                  id="noteContentInput"
+                  rows="3"
+                  placeholder="Write shared research, confirmation details, station tips, or group reminders..."
+                  required
+                ></textarea>
+                <div class="note-editor-actions">
+                  <button type="submit" class="btn btn-primary btn-sm" id="noteSubmitBtn">
+                    <span class="icon-inline" set:html={getIconSvg('plus', 13)}></span>
+                    <span id="noteSubmitBtnLabel">Save Note</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-outline btn-sm"
+                    id="noteCancelEditBtn"
+                    style="display: none;"
+                    onclick="handleCancelEditNote()"
+                  >
+                    <span class="icon-inline" set:html={getIconSvg('x', 13)}></span>
+                    <span>Cancel Edit</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <div id="notesListContainer" class="notes-list-grid">
+              {tripNotes.length === 0 ? (
+                <div class="notes-empty-state">
+                  <span class="icon-inline" set:html={getIconSvg('file-text', 18)}></span>
+                  <span>No collaborative notes yet. Add transit tips, local phrases, or shared reminders above.</span>
+                </div>
+              ) : (
+                tripNotes.map((note) => (
+                  <article class="note-card" id={`note-card-${note.id}`} data-note-id={note.id}>
+                    <div class="note-card-header">
+                      <h4 class="note-card-title">{note.title}</h4>
+                      <div class="note-card-actions">
+                        <button
+                          type="button"
+                          class="btn btn-outline btn-sm note-edit-btn"
+                          onclick={`handleEditNote('${note.id}')`}
+                          title="Edit note"
+                        >
+                          <span class="icon-inline" set:html={getIconSvg('edit', 12)}></span>
+                          <span>Edit</span>
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn-outline btn-sm delete-btn note-delete-btn"
+                          onclick={`handleDeleteNote('${note.id}')`}
+                          title="Delete note"
+                        >
+                          <span class="icon-inline" set:html={getIconSvg('trash', 12)}></span>
+                          <span>Delete</span>
+                        </button>
+                      </div>
+                    </div>
+                    <div class="note-card-body">{note.content}</div>
+                    <div class="note-card-meta">
+                      <span class="icon-inline" set:html={getIconSvg('clock', 11)}></span>
+                      <span>Updated {note.updated_at}</span>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       </section>
 
@@ -4107,6 +4469,31 @@ const initialClientData = {
           </div>
           <div class="pdp-section pdp-management-section" id="pdpManagementSection">
             <div class="pdp-section-label">Manage Stop</div>
+            <div class="pdp-vote-row" id="pdpVoteRow">
+              <span class="pdp-vote-label">Collaborator Vote</span>
+              <div class="pdp-vote-buttons">
+                <button
+                  type="button"
+                  class="btn btn-outline btn-sm pdp-vote-btn"
+                  id="pdpUpvoteBtn"
+                  onclick="handleVotePdpStop('up')"
+                  title="Upvote stop"
+                >
+                  <span class="icon-inline" set:html={getIconSvg('thumbs-up', 13)}></span>
+                  <span id="pdpUpvoteCount" class="pdp-vote-count">0</span>
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-outline btn-sm pdp-vote-btn"
+                  id="pdpDownvoteBtn"
+                  onclick="handleVotePdpStop('down')"
+                  title="Downvote stop"
+                >
+                  <span class="icon-inline" set:html={getIconSvg('thumbs-down', 13)}></span>
+                  <span id="pdpDownvoteCount" class="pdp-vote-count">0</span>
+                </button>
+              </div>
+            </div>
             <div class="pdp-management-actions" id="pdpManagementActions">
               <details class="move-dropdown" id="pdpMoveDropdown">
                 <summary class="btn btn-outline btn-sm move-btn" title="Move Stop">
@@ -4551,7 +4938,8 @@ const initialClientData = {
           const newTabs = doc.querySelector('.canvas-tabs');
           const curTabs = document.querySelector('.canvas-tabs');
           if (newTabs && curTabs) {
-            const currentActiveTab = clientState.session?.active_tab || 'itinerary';
+            const rawActiveTab = clientState.session?.active_tab || 'itinerary';
+            const currentActiveTab = rawActiveTab === 'bookings' ? 'reservations' : rawActiveTab === 'note' ? 'notes' : rawActiveTab;
             curTabs.innerHTML = newTabs.innerHTML;
             curTabs.querySelectorAll('.canvas-tab').forEach((t) => {
               if (t.getAttribute('data-tab') === currentActiveTab) {
@@ -4580,9 +4968,13 @@ const initialClientData = {
             : 'all';
           renderMapPins(currentDayFilter, true);
 
-          // 7. Re-select active stop
+          // 7. Re-select active stop and refresh open Place Detail Panel if visible
           if (clientState.session?.selected_stop_id) {
             selectStop(clientState.session.selected_stop_id, clientState.session.selected_stop_name || '', false);
+            const pdpPanel = document.getElementById('placeDetailPanel');
+            if (pdpPanel && pdpPanel.classList.contains('open')) {
+              openPlaceDetail(clientState.session.selected_stop_id);
+            }
           }
         } catch (err) {
           console.error('DOM Hydration error:', err);
@@ -4834,6 +5226,18 @@ const initialClientData = {
           }
         }
 
+        // 10. Collaborator Vote Counts
+        const upvoteCountEl = document.getElementById('pdpUpvoteCount');
+        const downvoteCountEl = document.getElementById('pdpDownvoteCount');
+        const upvoteBtn = document.getElementById('pdpUpvoteBtn');
+        const downvoteBtn = document.getElementById('pdpDownvoteBtn');
+        const upCount = Number(stop.upvotes ?? stop.votes?.up ?? 0);
+        const downCount = Number(stop.downvotes ?? stop.votes?.down ?? 0);
+        if (upvoteCountEl) upvoteCountEl.innerText = String(upCount);
+        if (downvoteCountEl) downvoteCountEl.innerText = String(downCount);
+        if (upvoteBtn) upvoteBtn.classList.toggle('active-upvote', stop.user_vote === 'up');
+        if (downvoteBtn) downvoteBtn.classList.toggle('active-downvote', stop.user_vote === 'down');
+
         panel.classList.add('open');
       }
 
@@ -4867,8 +5271,63 @@ const initialClientData = {
         closePlaceDetail();
       }
 
+      async function handleVotePdpStop(voteType) {
+        if (!currentPdpStop) return;
+        const tripId = clientState.activeTrip?.id;
+        const stopId = currentPdpStop.id;
+        if (!tripId || !stopId) return;
+
+        const normalizedVote = voteType === 'down' ? 'down' : 'up';
+        try {
+          const res = await fetch(`/api/v1/trips/${encodeURIComponent(tripId)}/stops/${encodeURIComponent(stopId)}/vote`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ vote: normalizedVote }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const up = Number(data.up ?? 0);
+            const down = Number(data.down ?? 0);
+            currentPdpStop.upvotes = up;
+            currentPdpStop.downvotes = down;
+            currentPdpStop.votes = { up, down };
+            currentPdpStop.user_vote = data.user_vote || normalizedVote;
+
+            const stopInState = (clientState.stops || []).find((s) => s.id === stopId);
+            if (stopInState) {
+              stopInState.upvotes = up;
+              stopInState.downvotes = down;
+              stopInState.votes = { up, down };
+              stopInState.user_vote = currentPdpStop.user_vote;
+            }
+
+            const upEl = document.getElementById('pdpUpvoteCount');
+            const downEl = document.getElementById('pdpDownvoteCount');
+            const upBtn = document.getElementById('pdpUpvoteBtn');
+            const downBtn = document.getElementById('pdpDownvoteBtn');
+            if (upEl) upEl.innerText = String(up);
+            if (downEl) downEl.innerText = String(down);
+            if (upBtn) upBtn.classList.toggle('active-upvote', currentPdpStop.user_vote === 'up');
+            if (downBtn) downBtn.classList.toggle('active-downvote', currentPdpStop.user_vote === 'down');
+
+            showToast(`${normalizedVote === 'up' ? 'Upvoted' : 'Downvoted'} "${currentPdpStop.place_name}"`);
+            await persistSession({
+              event_summary: `${normalizedVote === 'up' ? 'Upvoted' : 'Downvoted'} stop "${currentPdpStop.place_name}"`,
+              selected_stop_id: stopId,
+              actor: 'ui',
+            });
+            setTimeout(() => refreshWorkspaceDom(), 300);
+          } else {
+            showToast('Failed to record stop vote');
+          }
+        } catch {
+          showToast('Failed to record stop vote');
+        }
+      }
+
       window.handleMovePdpStop = handleMovePdpStop;
       window.handleDeletePdpStop = handleDeletePdpStop;
+      window.handleVotePdpStop = handleVotePdpStop;
 
       // Taxi Driver Fullscreen Modal Handlers
       function openTaxiModal() {
@@ -5524,6 +5983,179 @@ const initialClientData = {
         }
       }
 
+      // 12b. Delete Reservation / Booking
+      async function handleDeleteReservation(reservationId) {
+        const tripId = clientState.activeTrip?.id;
+        if (!tripId || !reservationId) return;
+
+        try {
+          const res = await fetch(
+            `/api/v1/trips/${encodeURIComponent(tripId)}/reservations/${encodeURIComponent(reservationId)}`,
+            { method: 'DELETE' }
+          );
+          if (res.ok) {
+            showToast('Removed booking');
+            await persistSession({
+              event_summary: `Deleted reservation ${reservationId}`,
+              active_tab: 'reservations',
+              actor: 'ui',
+            });
+            setTimeout(() => refreshWorkspaceDom(), 300);
+          } else {
+            showToast('Failed to remove booking');
+          }
+        } catch {
+          showToast('Failed to remove booking');
+        }
+      }
+
+      // 12c. Collaborator Invitation Panel & Submission
+      function toggleInviteCollaboratorPanel() {
+        const panel = document.getElementById('inviteCollaboratorPanel');
+        if (!panel) return;
+        panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+        const nameInput = document.getElementById('inviteCollabName');
+        if (panel.style.display === 'block' && nameInput) nameInput.focus();
+      }
+
+      async function handleInviteCollaborator(e) {
+        e.preventDefault();
+        const tripId = clientState.activeTrip?.id;
+        if (!tripId) return;
+
+        const nameInput = document.getElementById('inviteCollabName');
+        const emailInput = document.getElementById('inviteCollabEmail');
+        const roleSelect = document.getElementById('inviteCollabRole');
+        const name = nameInput ? nameInput.value.trim() : '';
+        const email = emailInput ? emailInput.value.trim() : '';
+        const role = roleSelect ? roleSelect.value : 'editor';
+        if (!name || !email) return;
+
+        try {
+          const res = await fetch(`/api/v1/trips/${encodeURIComponent(tripId)}/collaborators`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, email, role }),
+          });
+          if (res.ok) {
+            if (nameInput) nameInput.value = '';
+            if (emailInput) emailInput.value = '';
+            const panel = document.getElementById('inviteCollaboratorPanel');
+            if (panel) panel.style.display = 'none';
+            showToast(`Invited ${name} (${role})`);
+            await persistSession({
+              event_summary: `Invited collaborator ${name} (${email})`,
+              actor: 'ui',
+            });
+            setTimeout(() => refreshWorkspaceDom(), 300);
+          } else {
+            await submitChatMessage(`Invite ${name} (${email}) as ${role}`);
+          }
+        } catch {
+          await submitChatMessage(`Invite ${name} (${email}) as ${role}`);
+        }
+      }
+
+      // 12d. Collaborative Trip Notes CRUD
+      async function handleInlineSaveNote(e) {
+        e.preventDefault();
+        const tripId = clientState.activeTrip?.id;
+        if (!tripId) return;
+
+        const idInput = document.getElementById('noteIdInput');
+        const titleInput = document.getElementById('noteTitleInput');
+        const contentInput = document.getElementById('noteContentInput');
+        const noteId = idInput ? idInput.value.trim() : '';
+        const title = titleInput ? titleInput.value.trim() : '';
+        const content = contentInput ? contentInput.value.trim() : '';
+        if (!title || !content) return;
+
+        try {
+          const payload = { title, content };
+          if (noteId) payload.id = noteId;
+          const res = await fetch(`/api/v1/trips/${encodeURIComponent(tripId)}/notes`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (res.ok) {
+            handleCancelEditNote();
+            showToast(`${noteId ? 'Updated' : 'Saved'} note "${title}"`);
+            await persistSession({
+              event_summary: `${noteId ? 'Updated' : 'Saved'} trip note "${title}"`,
+              active_tab: 'notes',
+              actor: 'ui',
+            });
+            setTimeout(() => refreshWorkspaceDom(), 300);
+          } else {
+            await submitChatMessage(`Add note titled ${title}: ${content}`);
+          }
+        } catch {
+          await submitChatMessage(`Add note titled ${title}: ${content}`);
+        }
+      }
+
+      function handleEditNote(noteId) {
+        const note = (clientState.tripNotes || []).find((n) => n.id === noteId);
+        if (!note) return;
+
+        const idInput = document.getElementById('noteIdInput');
+        const titleInput = document.getElementById('noteTitleInput');
+        const contentInput = document.getElementById('noteContentInput');
+        const submitLabel = document.getElementById('noteSubmitBtnLabel');
+        const cancelBtn = document.getElementById('noteCancelEditBtn');
+
+        if (idInput) idInput.value = note.id;
+        if (titleInput) titleInput.value = note.title || '';
+        if (contentInput) contentInput.value = note.content || '';
+        if (submitLabel) submitLabel.innerText = 'Update Note';
+        if (cancelBtn) cancelBtn.style.display = 'inline-flex';
+        if (titleInput) titleInput.focus();
+      }
+
+      function handleCancelEditNote() {
+        const idInput = document.getElementById('noteIdInput');
+        const titleInput = document.getElementById('noteTitleInput');
+        const contentInput = document.getElementById('noteContentInput');
+        const submitLabel = document.getElementById('noteSubmitBtnLabel');
+        const cancelBtn = document.getElementById('noteCancelEditBtn');
+
+        if (idInput) idInput.value = '';
+        if (titleInput) titleInput.value = '';
+        if (contentInput) contentInput.value = '';
+        if (submitLabel) submitLabel.innerText = 'Save Note';
+        if (cancelBtn) cancelBtn.style.display = 'none';
+      }
+
+      async function handleDeleteNote(noteId) {
+        const tripId = clientState.activeTrip?.id;
+        if (!tripId || !noteId) return;
+
+        try {
+          const res = await fetch(
+            `/api/v1/trips/${encodeURIComponent(tripId)}/notes?note_id=${encodeURIComponent(noteId)}`,
+            { method: 'DELETE' }
+          );
+          if (res.ok) {
+            const idInput = document.getElementById('noteIdInput');
+            if (idInput && idInput.value === noteId) {
+              handleCancelEditNote();
+            }
+            showToast('Deleted trip note');
+            await persistSession({
+              event_summary: `Deleted trip note ${noteId}`,
+              active_tab: 'notes',
+              actor: 'ui',
+            });
+            setTimeout(() => refreshWorkspaceDom(), 300);
+          } else {
+            showToast('Failed to delete trip note');
+          }
+        } catch {
+          showToast('Failed to delete trip note');
+        }
+      }
+
       // 13. Conversational Assistant Handler
       async function sendPrompt(text) {
         const input = document.getElementById('chatInput');
@@ -5742,6 +6374,13 @@ const initialClientData = {
       window.toggleAddReservationPanel = toggleAddReservationPanel;
       window.handleDayPillSelect = handleDayPillSelect;
       window.refreshWorkspaceDom = refreshWorkspaceDom;
+      window.handleDeleteReservation = handleDeleteReservation;
+      window.toggleInviteCollaboratorPanel = toggleInviteCollaboratorPanel;
+      window.handleInviteCollaborator = handleInviteCollaborator;
+      window.handleInlineSaveNote = handleInlineSaveNote;
+      window.handleEditNote = handleEditNote;
+      window.handleCancelEditNote = handleCancelEditNote;
+      window.handleDeleteNote = handleDeleteNote;
 
       // Mount on DOM ready
       document.addEventListener('DOMContentLoaded', () => {

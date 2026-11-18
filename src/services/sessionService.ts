@@ -11,11 +11,29 @@ import type { StopDetail, Place, TransitLeg } from '../types/domain';
 
 export type SessionActor = 'ui' | 'agy' | 'chat' | 'system';
 
+export const VALID_ACTIVE_TABS = [
+  'itinerary',
+  'wishlist',
+  'bookings',
+  'reservations',
+  'budget',
+  'checklists',
+  'notes',
+] as const;
+
+export type SessionTab = (typeof VALID_ACTIVE_TABS)[number] | (string & {});
+
+export function normalizeSessionTab(tab: string): SessionTab {
+  const trimmed = tab.trim();
+  if (trimmed.toLowerCase() === 'note') return 'notes';
+  return trimmed;
+}
+
 export interface WorkspaceSessionRecord {
   session_id: string;
   active_trip_id: string;
   active_day_number: number | null;
-  active_tab: string;
+  active_tab: SessionTab;
   selected_stop_id: string | null;
   last_actor: SessionActor;
   last_event_summary: string;
@@ -52,7 +70,7 @@ export interface WorkspaceSession {
   session_id: string;
   active_trip_id: string;
   active_day_number: number | null;
-  active_tab: string;
+  active_tab: SessionTab;
   selected_stop_id: string | null;
   selected_stop?: StopDetail | null;
   last_actor: SessionActor;
@@ -78,7 +96,7 @@ export interface UpdateSessionStatePatch {
   session_id?: string;
   active_trip_id?: string;
   active_day_number?: number | null;
-  active_tab?: string;
+  active_tab?: SessionTab;
   selected_stop_id?: string | null;
   actor?: SessionActor;
   event_summary?: string;
@@ -93,7 +111,7 @@ export interface RecordSessionMutationInput {
   action: string;
   summary: string;
   active_day_number?: number | null;
-  active_tab?: string;
+  active_tab?: SessionTab;
   selected_stop_id?: string | null;
   payload?: Record<string, any>;
 }
@@ -422,7 +440,8 @@ export async function updateSessionState(
     patch.active_day_number !== undefined
       ? patch.active_day_number
       : current.active_day_number;
-  const newTab = patch.active_tab !== undefined ? patch.active_tab : current.active_tab;
+  const newTab =
+    patch.active_tab !== undefined ? normalizeSessionTab(patch.active_tab) : current.active_tab;
   const newSelectedStopId =
     patch.selected_stop_id !== undefined
       ? patch.selected_stop_id
@@ -521,7 +540,8 @@ export async function recordSessionMutation(
     input.active_day_number !== undefined
       ? input.active_day_number
       : current.active_day_number;
-  const newTab = input.active_tab !== undefined ? input.active_tab : current.active_tab;
+  const newTab =
+    input.active_tab !== undefined ? normalizeSessionTab(input.active_tab) : current.active_tab;
   const newSelectedStopId =
     input.selected_stop_id !== undefined
       ? input.selected_stop_id

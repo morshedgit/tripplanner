@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { createTestDb, setTestDb, type DatabaseAdapter } from '../src/db/client';
 import {
   handleMcpRequest,
+  executeMcpTool,
   getOrCreateSession,
   bumpSessionState,
   MCP_TOOLS,
@@ -622,5 +623,97 @@ describe('Issue #16: Antigravity (agy) Plugin, MCP Server & Live Session Sync', 
     expect(scriptContent).toContain('#!/usr/bin/env node');
     expect(scriptContent).toContain('process.stdin');
     expect(scriptContent).toContain('/api/v1/mcp');
+  });
+
+  // --------------------------------------------------------------------------
+  // 11. Issue #35: Notes, Collaborator Invitations & Notes Tab Navigation
+  // --------------------------------------------------------------------------
+
+  it('25. executeMcpTool manage_notes upserts and deletes trip notes and activates notes tab', async () => {
+    const beforeSession = await getOrCreateSession(db);
+    const initialVersion = beforeSession.state_version;
+
+    // Create note via manage_notes upsert
+    const createRes = await executeMcpTool(db, 'manage_notes', {
+      action: 'upsert',
+      title: 'Kansai Airport Express',
+      content_markdown: 'Take the Haruka Limited Express to Kyoto Station.',
+    });
+
+    expect(createRes.note).toBeDefined();
+    expect(createRes.note.title).toBe('Kansai Airport Express');
+    expect(createRes.note.content).toContain('Haruka Limited Express');
+    expect(createRes.session.active_tab).toBe('notes');
+    expect(createRes.state_version).toBe(initialVersion + 1);
+
+    const noteId = createRes.note.id;
+
+    // Update existing note via manage_notes upsert
+    const updateRes = await executeMcpTool(db, 'manage_notes', {
+      action: 'upsert',
+      note_id: noteId,
+      title: 'Kansai Airport Express (Updated)',
+      content_markdown: 'Use ICOCA card at JR West ticket gates.',
+    });
+
+    expect(updateRes.note.id).toBe(noteId);
+    expect(updateRes.note.title).toBe('Kansai Airport Express (Updated)');
+    expect(updateRes.state_version).toBe(initialVersion + 2);
+
+    // Delete note via manage_notes delete
+    const deleteRes = await executeMcpTool(db, 'manage_notes', {
+      action: 'delete',
+      note_id: noteId,
+    });
+
+    expect(deleteRes.success).toBe(true);
+    expect(deleteRes.deleted_note_id).toBe(noteId);
+    expect(deleteRes.session.active_tab).toBe('notes');
+    expect(deleteRes.state_version).toBe(initialVersion + 3);
+
+    const remaining = await db.queryOne('SELECT * FROM trip_notes WHERE id = ?', [noteId]);
+    expect(remaining).toBeNull();
+  });
+
+  it('26. executeMcpTool invite_collaborator adds collaborator to trip and bumps session state', async () => {
+    const beforeSession = await getOrCreateSession(db);
+    const initialVersion = beforeSession.state_version;
+
+    const res = await executeMcpTool(db, 'invite_collaborator', {
+      name: 'Charlie Kim',
+      email: 'charlie@example.com',
+      role: 'editor',
+    });
+
+    expect(res.collaborator).toBeDefined();
+    expect(res.collaborator.name).toBe('Charlie Kim');
+    expect(res.collaborator.email).toBe('charlie@example.com');
+    expect(res.collaborator.role).toBe('editor');
+    expect(res.state_version).toBe(initialVersion + 1);
+    expect(res.session.last_actor).toBe('agy');
+
+    const stored = await db.queryOne<any>(
+      'SELECT * FROM collaborators WHERE trip_id = ? AND email = ?',
+      [beforeSession.active_trip_id, 'charlie@example.com']
+    );
+    expect(stored).toBeDefined();
+    expect(stored.name).toBe('Charlie Kim');
+  });
+
+  it('27. executeMcpTool navigate_ui supports active_tab: "notes" and exposes new tools in MCP_TOOLS', async () => {
+    const toolNames = MCP_TOOLS.map((t) => t.name);
+    expect(toolNames).toContain('manage_notes');
+    expect(toolNames).toContain('invite_collaborator');
+
+    const navTool = MCP_TOOLS.find((t) => t.name === 'navigate_ui');
+    expect(navTool?.inputSchema?.properties?.active_tab?.enum).toContain('notes');
+
+    const navRes = await executeMcpTool(db, 'navigate_ui', {
+      active_tab: 'notes',
+      message: 'Switched to Notes tab',
+    });
+
+    expect(navRes.session.active_tab).toBe('notes');
+    expect(navRes.session.last_event_summary).toBe('Switched to Notes tab');
   });
 });

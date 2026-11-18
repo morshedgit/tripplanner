@@ -1,12 +1,18 @@
 import type { DatabaseAdapter } from '../db/client';
 import { generateId } from '../lib/http';
 import type { Trip, Day, Section, Stop, Place } from '../types/domain';
-import { listTrips, createTrip, getTrip, getTripSummary, type CreateTripInput } from './tripService';
+import { listTrips, createTrip, getTrip, getTripSummary, addCollaborator, type CreateTripInput } from './tripService';
 import { addTripStop, moveTripStop, deleteTripStop, type AddTripStopInput } from './stopService';
 import { optimizeDayRoute, type TransitCalculationResult } from './routingService';
 import { createReservation, type CreateReservationInput } from './reservationService';
 import { createExpense, getBudgetSettlement, type CreateExpenseInput } from './expenseService';
-import { addChecklistItem, toggleChecklistItem, type AddChecklistItemInput } from './checklistService';
+import {
+  addChecklistItem,
+  toggleChecklistItem,
+  upsertTripNote,
+  deleteTripNote,
+  type AddChecklistItemInput,
+} from './checklistService';
 import { processChatMessage } from './chatAgentService';
 
 // ============================================================================
@@ -263,7 +269,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
         active_day_number: { type: 'integer', description: 'Switch to a specific day itinerary' },
         active_tab: {
           type: 'string',
-          enum: ['itinerary', 'wishlist', 'bookings', 'budget', 'checklists'],
+          enum: ['itinerary', 'wishlist', 'bookings', 'budget', 'checklists', 'notes'],
           description: 'Switch the active navigation tab',
         },
         selected_stop_id: {
@@ -503,6 +509,42 @@ export const MCP_TOOLS: McpToolDefinition[] = [
         session_id: { type: 'string', description: "Session ID (defaults to 'default')" },
       },
       required: ['action'],
+    },
+  },
+  {
+    name: 'manage_notes',
+    description: 'Creates, updates, or deletes a collaborative trip note and updates workspace_sessions.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        trip_id: { type: 'string', description: 'Trip ID (defaults to active_trip_id)' },
+        action: { type: 'string', enum: ['upsert', 'delete'], description: 'Action to perform on notes' },
+        note_id: { type: 'string', description: 'Note ID (optional for upsert to update existing note, required for delete)' },
+        title: { type: 'string', description: 'Note title (used for upsert)' },
+        content_markdown: { type: 'string', description: 'Note content in Markdown or plain text (used for upsert)' },
+        session_id: { type: 'string', description: "Session ID (defaults to 'default')" },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'invite_collaborator',
+    description: 'Invites a collaborator to the active trip and updates workspace_sessions.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        trip_id: { type: 'string', description: 'Trip ID (defaults to active_trip_id)' },
+        name: { type: 'string', description: 'Collaborator full name' },
+        email: { type: 'string', description: 'Collaborator email address' },
+        role: {
+          type: 'string',
+          enum: ['owner', 'editor', 'viewer'],
+          description: "Collaborator role (defaults to 'editor')",
+        },
+        avatar_url: { type: 'string', description: 'Optional avatar URL' },
+        session_id: { type: 'string', description: "Session ID (defaults to 'default')" },
+      },
+      required: ['name', 'email'],
     },
   },
   {
@@ -966,6 +1008,108 @@ export async function executeMcpTool(
 
       return {
         item,
+        session: updated,
+        state_version: updated.state_version,
+      };
+    }
+
+    case 'manage_notes': {
+      const session = await getOrCreateSession(db, sessionId);
+      const tripId = args.trip_id || session.active_trip_id;
+
+      if (args.action === 'upsert') {
+        const noteId = args.note_id || args.id;
+        const note = await upsertTripNote(db, tripId, {
+          id: noteId,
+          title: args.title || 'Trip Note',
+          content_markdown: args.content_markdown ?? args.content ?? '',
+        });
+        const summary = noteId
+          ? `Updated trip note: ${note.title}`
+          : `Saved trip note: ${note.title}`;
+
+        const updated = await bumpSessionState(db, {
+          sessionId,
+          tripId,
+          actor: 'agy',
+          action: 'manage_notes',
+          summary,
+          patch: {
+            active_tab: 'notes',
+          },
+          payload: { note_id: note.id, action: 'upsert', title: note.title },
+        });
+
+        return {
+          note,
+          session: updated,
+          state_version: updated.state_version,
+        };
+      } else if (args.action === 'delete') {
+        const targetNoteId = args.note_id || args.id;
+        if (!targetNoteId) {
+          throw new Error('note_id is required when action is "delete"');
+        }
+        const deleted = await deleteTripNote(db, tripId, targetNoteId);
+        const summary = `Deleted trip note: ${targetNoteId}`;
+
+        const updated = await bumpSessionState(db, {
+          sessionId,
+          tripId,
+          actor: 'agy',
+          action: 'manage_notes',
+          summary,
+          patch: {
+            active_tab: 'notes',
+          },
+          payload: { note_id: targetNoteId, action: 'delete', deleted },
+        });
+
+        return {
+          success: deleted,
+          deleted_note_id: targetNoteId,
+          session: updated,
+          state_version: updated.state_version,
+        };
+      } else {
+        throw new Error(`Unsupported notes action: ${args.action}`);
+      }
+    }
+
+    case 'invite_collaborator': {
+      const session = await getOrCreateSession(db, sessionId);
+      const tripId = args.trip_id || session.active_trip_id;
+
+      const name = typeof args.name === 'string' ? args.name.trim() : '';
+      const email = typeof args.email === 'string' ? args.email.trim() : '';
+      if (!name || !email) {
+        throw new Error('Both name and email are required to invite a collaborator');
+      }
+
+      const role = args.role || 'editor';
+      const collaborator = await addCollaborator(db, tripId, {
+        name,
+        email,
+        role,
+        avatar_url: args.avatar_url ?? null,
+      });
+
+      const updated = await bumpSessionState(db, {
+        sessionId,
+        tripId,
+        actor: 'agy',
+        action: 'invite_collaborator',
+        summary: `Invited collaborator: ${collaborator.name} (${collaborator.role})`,
+        payload: {
+          collaborator_id: collaborator.id,
+          name: collaborator.name,
+          email: collaborator.email,
+          role: collaborator.role,
+        },
+      });
+
+      return {
+        collaborator,
         session: updated,
         state_version: updated.state_version,
       };
