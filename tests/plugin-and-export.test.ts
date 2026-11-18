@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createTestDb, setTestDb, type DatabaseAdapter } from '../src/db/client';
 import {
@@ -6,7 +8,7 @@ import {
   exportExpensesCsv,
 } from '../src/services/exportService';
 import { GET as getPluginManifest } from '../src/pages/.well-known/ai-plugin.json';
-import { GET as getOpenApiSpec } from '../src/pages/api/v1/openapi.json';
+import { GET as getOpenApiSpec, generateOpenApiSpec } from '../src/pages/api/v1/openapi.json';
 import { GET as getMarkdownExport } from '../src/pages/api/v1/trips/[tripId]/export/markdown';
 import { GET as getIcsExport } from '../src/pages/api/v1/trips/[tripId]/export/ics';
 import { GET as getExpensesCsvExport } from '../src/pages/api/v1/trips/[tripId]/export/expenses.csv';
@@ -125,6 +127,41 @@ describe('Issue #5: ChatGPT Plugin Manifest, OpenAPI 3.1 Spec & Multi-Format Exp
       expect(spec.components.schemas.Expense).toBeDefined();
       expect(spec.components.schemas.BudgetSettlement).toBeDefined();
       expect(spec.components.schemas.ProblemDetails).toBeDefined();
+    });
+
+    it('includes session, events SSE, MCP, diorama, reservation item, and stop vote paths and schemas', () => {
+      const spec = generateOpenApiSpec('http://localhost:4321') as any;
+
+      expect(spec.paths['/api/v1/session']).toBeDefined();
+      expect(spec.paths['/api/v1/session'].get.operationId).toBe('getSessionContext');
+      expect(spec.paths['/api/v1/session'].post.operationId).toBe('updateSessionState');
+
+      expect(spec.paths['/api/v1/events']).toBeDefined();
+      expect(spec.paths['/api/v1/events'].get.operationId).toBe('streamSessionEvents');
+      expect(spec.paths['/api/v1/events'].get.responses['200'].content['text/event-stream']).toBeDefined();
+
+      expect(spec.paths['/api/v1/mcp']).toBeDefined();
+      expect(spec.paths['/api/v1/mcp'].get.operationId).toBe('getMcpServerInfo');
+      expect(spec.paths['/api/v1/mcp'].post.operationId).toBe('handleMcpRpc');
+
+      expect(spec.paths['/api/v1/trips/{tripId}/diorama']).toBeDefined();
+      expect(spec.paths['/api/v1/trips/{tripId}/diorama'].get.operationId).toBe('getTripDiorama');
+      expect(spec.paths['/api/v1/trips/{tripId}/diorama'].post.operationId).toBe('renderTripDiorama');
+
+      expect(spec.paths['/api/v1/trips/{tripId}/reservations/{reservationId}']).toBeDefined();
+      expect(spec.paths['/api/v1/trips/{tripId}/reservations/{reservationId}'].patch.operationId).toBe('updateReservation');
+      expect(spec.paths['/api/v1/trips/{tripId}/reservations/{reservationId}'].delete.operationId).toBe('deleteReservation');
+
+      expect(spec.paths['/api/v1/trips/{tripId}/stops/{stopId}/vote']).toBeDefined();
+      expect(spec.paths['/api/v1/trips/{tripId}/stops/{stopId}/vote'].post.operationId).toBe('voteOnTripStop');
+
+      expect(spec.components.schemas.WorkspaceSession).toBeDefined();
+      expect(spec.components.schemas.SessionEvent).toBeDefined();
+      expect(spec.components.schemas.SessionStateResult).toBeDefined();
+      expect(spec.components.schemas.DioramaMetadata).toBeDefined();
+      expect(spec.components.schemas.McpServerInfo).toBeDefined();
+      expect(spec.components.schemas.McpRpcRequest).toBeDefined();
+      expect(spec.components.schemas.McpRpcResponse).toBeDefined();
     });
   });
 
@@ -389,6 +426,28 @@ describe('Issue #5: ChatGPT Plugin Manifest, OpenAPI 3.1 Spec & Multi-Format Exp
 
       expect(response.status).toBe(404);
       expect(response.headers.get('Content-Type')).toContain('application/problem+json');
+    });
+  });
+
+  // ==========================================================================
+  // 7. README Documentation & Zero-Emoji Compliance (Issue #36)
+  // ==========================================================================
+  describe('README Documentation & Zero-Emoji Compliance', () => {
+    it('contains zero Unicode emojis and documents current TripPlanner API endpoints', () => {
+      const readme = readFileSync(resolve(process.cwd(), 'README.md'), 'utf-8');
+      const emojiRegex = /[\p{Emoji_Presentation}\p{Extended_Pictographic}]/u;
+
+      expect(emojiRegex.test(readme)).toBe(false);
+
+      expect(readme).toContain('/api/v1/trips/:tripId/days/:dayNumber/optimize-route');
+      expect(readme).toContain('/api/v1/trips/:tripId/budget/settle-up');
+      expect(readme).toContain('/api/v1/trips/:tripId/export/markdown');
+      expect(readme).toContain('/api/v1/trips/:tripId/export/ics');
+      expect(readme).toContain('/api/v1/trips/:tripId/export/expenses.csv');
+      expect(readme).toContain('/api/v1/trips/:tripId/diorama');
+      expect(readme).toContain('/api/v1/session');
+      expect(readme).toContain('/api/v1/events');
+      expect(readme).toContain('/api/v1/mcp');
     });
   });
 });
