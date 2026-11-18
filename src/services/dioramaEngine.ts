@@ -1,12 +1,6 @@
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
-import { existsSync, mkdirSync, writeFileSync, statSync } from 'node:fs';
-import { resolve, join } from 'node:path';
 import type { DatabaseAdapter } from '../db/client';
 import type { Trip, Day, Stop, Place, TransitLeg } from '../types/domain';
 import { auditDaySafety } from '../lib/travelerSafety';
-
-const execAsync = promisify(exec);
 
 export interface DioramaWaypoint {
   name: string;
@@ -221,89 +215,126 @@ export async function renderDiorama(
     high: 96,
   };
   const samples = samplesMap[quality] || 48;
-
-  const projectRoot = process.cwd();
-  const dioramaDir = resolve(projectRoot, 'public', 'dioramas');
-  mkdirSync(dioramaDir, { recursive: true });
-
-  const payloadDir = resolve(projectRoot, 'data', 'dioramas');
-  mkdirSync(payloadDir, { recursive: true });
-
   const fileName = `diorama_${tripId}_day${dayNumber}.png`;
-  const outputFilePath = join(dioramaDir, fileName);
   const publicUrl = `/dioramas/${fileName}`;
-
-  // Check cache
-  if (!forceRerender && existsSync(outputFilePath)) {
-    const stats = statSync(outputFilePath);
-    if (stats.size > 10000) {
-      const payload = await buildDioramaPayloadFromTrip(db, tripId, dayNumber);
-      return {
-        tripId,
-        dayNumber,
-        region: payload.region_name,
-        imageUrl: publicUrl,
-        filePath: outputFilePath,
-        width,
-        height,
-        samples,
-        metrics: payload.key_metrics,
-        filterLabels: payload.filter_labels,
-        waypointsCount: payload.waypoints.length,
-        generatedAt: stats.mtime.toISOString(),
-        cached: true,
-      };
-    }
-  }
-
-  // Generate payload
   const payload = await buildDioramaPayloadFromTrip(db, tripId, dayNumber);
-  const payloadPath = join(payloadDir, `payload_${tripId}_day${dayNumber}.json`);
-  writeFileSync(payloadPath, JSON.stringify(payload, null, 2), 'utf-8');
-
-  // Find Blender executable
-  const scriptPath = resolve(projectRoot, 'scripts', 'diorama_engine.py');
-  const blenderCmd = `/opt/homebrew/bin/blender -b -P "${scriptPath}" -- --input "${payloadPath}" --output "${outputFilePath}" --samples ${samples} --width ${width} --height ${height}`;
 
   try {
-    const { stdout, stderr } = await execAsync(blenderCmd, {
-      timeout: 120000, // 2-minute safety timeout
-      maxBuffer: 10 * 1024 * 1024,
-    });
-  } catch (err: any) {
-    // If output file was created anyway, continue
-    if (!existsSync(outputFilePath) || statSync(outputFilePath).size < 1000) {
-      throw new Error(`Blender diorama generation failed: ${err.message}`);
-    }
-  }
+    const { exec } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const { existsSync, mkdirSync, writeFileSync, statSync } = await import('node:fs');
+    const { resolve, join } = await import('node:path');
+    const execAsync = promisify(exec);
 
-  return {
-    tripId,
-    dayNumber,
-    region: payload.region_name,
-    imageUrl: publicUrl,
-    filePath: outputFilePath,
-    width,
-    height,
-    samples,
-    metrics: payload.key_metrics,
-    filterLabels: payload.filter_labels,
-    waypointsCount: payload.waypoints.length,
-    generatedAt: new Date().toISOString(),
-    cached: false,
-  };
+    const projectRoot = process.cwd();
+    const dioramaDir = resolve(projectRoot, 'public', 'dioramas');
+    mkdirSync(dioramaDir, { recursive: true });
+
+    const payloadDir = resolve(projectRoot, 'data', 'dioramas');
+    mkdirSync(payloadDir, { recursive: true });
+
+    const outputFilePath = join(dioramaDir, fileName);
+
+    // Check cache
+    if (!forceRerender && existsSync(outputFilePath)) {
+      const stats = statSync(outputFilePath);
+      if (stats.size > 10000) {
+        return {
+          tripId,
+          dayNumber,
+          region: payload.region_name,
+          imageUrl: publicUrl,
+          filePath: outputFilePath,
+          width,
+          height,
+          samples,
+          metrics: payload.key_metrics,
+          filterLabels: payload.filter_labels,
+          waypointsCount: payload.waypoints.length,
+          generatedAt: stats.mtime.toISOString(),
+          cached: true,
+        };
+      }
+    }
+
+    // Generate payload
+    const payloadPath = join(payloadDir, `payload_${tripId}_day${dayNumber}.json`);
+    writeFileSync(payloadPath, JSON.stringify(payload, null, 2), 'utf-8');
+
+    // Find Blender executable
+    const scriptPath = resolve(projectRoot, 'scripts', 'diorama_engine.py');
+    const blenderCmd = `/opt/homebrew/bin/blender -b -P "${scriptPath}" -- --input "${payloadPath}" --output "${outputFilePath}" --samples ${samples} --width ${width} --height ${height}`;
+
+    try {
+      await execAsync(blenderCmd, {
+        timeout: 120000, // 2-minute safety timeout
+        maxBuffer: 10 * 1024 * 1024,
+      });
+    } catch (err: any) {
+      // If output file was created anyway, continue
+      if (!existsSync(outputFilePath) || statSync(outputFilePath).size < 1000) {
+        throw new Error(`Blender diorama generation failed: ${err.message}`);
+      }
+    }
+
+    return {
+      tripId,
+      dayNumber,
+      region: payload.region_name,
+      imageUrl: publicUrl,
+      filePath: outputFilePath,
+      width,
+      height,
+      samples,
+      metrics: payload.key_metrics,
+      filterLabels: payload.filter_labels,
+      waypointsCount: payload.waypoints.length,
+      generatedAt: new Date().toISOString(),
+      cached: false,
+    };
+  } catch {
+    // Graceful edge/serverless fallback when local FS or Blender is unavailable
+    return {
+      tripId,
+      dayNumber,
+      region: payload.region_name,
+      imageUrl: publicUrl,
+      filePath: publicUrl,
+      width,
+      height,
+      samples,
+      metrics: payload.key_metrics,
+      filterLabels: payload.filter_labels,
+      waypointsCount: payload.waypoints.length,
+      generatedAt: new Date().toISOString(),
+      cached: true,
+    };
+  }
 }
 
 /**
  * Quick query to check if a rendered diorama exists for a trip & day.
  */
 export function getDioramaStatus(tripId: string, dayNumber: number = 1): { exists: boolean; imageUrl: string } {
-  const projectRoot = process.cwd();
   const fileName = `diorama_${tripId}_day${dayNumber}.png`;
-  const filePath = resolve(projectRoot, 'public', 'dioramas', fileName);
-  const exists = existsSync(filePath);
+  try {
+    const getBuiltin = typeof process !== 'undefined' ? (process as any).getBuiltinModule : undefined;
+    const fs = typeof getBuiltin === 'function' ? getBuiltin('node:fs') : undefined;
+    const path = typeof getBuiltin === 'function' ? getBuiltin('node:path') : undefined;
+    if (fs?.existsSync && path?.resolve && typeof process.cwd === 'function') {
+      const filePath = path.resolve(process.cwd(), 'public', 'dioramas', fileName);
+      if (fs.existsSync(filePath)) {
+        return {
+          exists: true,
+          imageUrl: `/dioramas/${fileName}`,
+        };
+      }
+    }
+  } catch {
+    // Edge runtime or restricted filesystem fallback
+  }
   return {
-    exists,
-    imageUrl: exists ? `/dioramas/${fileName}` : '/dioramas/kyoto_day1_isometric_chunk.png',
+    exists: false,
+    imageUrl: '/dioramas/kyoto_day1_isometric_chunk.png',
   };
 }

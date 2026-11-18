@@ -75,11 +75,22 @@ describe('Trip Service Unit Tests', () => {
       end_date: '2020-05-10',
     });
 
+    // Create a dynamically dated future trip so upcoming status filtering is clock-independent
+    const futureStart = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+    const futureEnd = new Date(Date.now() + 35 * 86_400_000).toISOString().slice(0, 10);
+    const futureTrip = await createTrip(db, {
+      title: 'Future Alpine Expedition',
+      destination: 'Zermatt, Switzerland',
+      start_date: futureStart,
+      end_date: futureEnd,
+    });
+
     const pastTrips = await listTrips(db, 'past');
     expect(pastTrips.some((t) => t.title === 'Past Rome Holiday')).toBe(true);
 
     const upcomingTrips = await listTrips(db, 'upcoming');
-    expect(upcomingTrips.some((t) => t.id === 'trip-kyoto-2026')).toBe(true);
+    expect(upcomingTrips.some((t) => t.id === futureTrip.id)).toBe(true);
+    expect(upcomingTrips.some((t) => t.title === 'Past Rome Holiday')).toBe(false);
   });
 
   it('createTrip scaffolds Day records, scheduled Morning/Afternoon/Evening sections, wishlist section and owner collaborator', async () => {

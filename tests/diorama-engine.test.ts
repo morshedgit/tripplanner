@@ -100,7 +100,7 @@ describe('3D Environmental Design & Cartographic Visualization Engine (2.5D Dior
       } as any);
 
       expect(res.status).toBe(200);
-      const data = await res.json();
+      const data = (await res.json()) as Record<string, any>;
       expect(data.tripId).toBe('trip-kyoto-2026');
       expect(data.dayNumber).toBe(1);
       expect(data.imageUrl).toBeDefined();

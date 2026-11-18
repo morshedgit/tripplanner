@@ -1,6 +1,3 @@
-import { readFileSync, existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
 import { SCHEMA_SQL } from './schema';
 
 /**
@@ -184,19 +181,22 @@ export function getSchemaSql(): string {
   }
 
   try {
-    const currentDir = dirname(fileURLToPath(import.meta.url));
-    const schemaFile = resolve(currentDir, 'schema.sql');
-    if (existsSync(schemaFile)) {
-      return readFileSync(schemaFile, 'utf8');
-    }
-  } catch {
-    // Continue fallback
-  }
+    const getBuiltin = typeof process !== 'undefined' ? (process as any).getBuiltinModule : undefined;
+    const fs = typeof getBuiltin === 'function' ? getBuiltin('node:fs') : undefined;
+    const path = typeof getBuiltin === 'function' ? getBuiltin('node:path') : undefined;
+    const url = typeof getBuiltin === 'function' ? getBuiltin('node:url') : undefined;
 
-  try {
-    const rootSchema = resolve(process.cwd(), 'src/db/schema.sql');
-    if (existsSync(rootSchema)) {
-      return readFileSync(rootSchema, 'utf8');
+    if (fs && path && url) {
+      const currentDir = path.dirname(url.fileURLToPath(import.meta.url));
+      const schemaFile = path.resolve(currentDir, 'schema.sql');
+      if (fs.existsSync(schemaFile)) {
+        return fs.readFileSync(schemaFile, 'utf8');
+      }
+
+      const rootSchema = path.resolve(process.cwd(), 'src/db/schema.sql');
+      if (fs.existsSync(rootSchema)) {
+        return fs.readFileSync(rootSchema, 'utf8');
+      }
     }
   } catch {
     // Continue fallback
@@ -278,7 +278,24 @@ export async function createTestDb(seed: boolean = true): Promise<DatabaseAdapte
  */
 export async function getDb(localsOrEnv?: any): Promise<DatabaseAdapter> {
   // 1. Detect Cloudflare D1 on Astro locals / runtime / env
-  const d1 = localsOrEnv?.runtime?.env?.DB ?? localsOrEnv?.DB;
+  let runtimeEnv: any;
+  try {
+    runtimeEnv = localsOrEnv?.runtime?.env;
+  } catch {
+    // @astrojs/cloudflare v14 throws when accessing deprecated locals.runtime.env
+  }
+
+  let cfWorkersEnv: any;
+  if (!runtimeEnv && !localsOrEnv?.DB) {
+    try {
+      const cfWorkersMod = 'cloudflare:workers';
+      cfWorkersEnv = (await import(/* @vite-ignore */ cfWorkersMod))?.env;
+    } catch {
+      // Not running in Cloudflare Workers runtime
+    }
+  }
+
+  const d1 = runtimeEnv?.DB ?? localsOrEnv?.DB ?? cfWorkersEnv?.DB;
   if (d1 && typeof d1.prepare === 'function') {
     const adapter = new D1Adapter(d1);
     await ensureD1Initialized(adapter);
@@ -333,7 +350,14 @@ export async function getDb(localsOrEnv?: any): Promise<DatabaseAdapter> {
  * or an in-memory TTL cache fallback.
  */
 export function getKvCache(localsOrEnv?: any): KvCacheAdapter {
-  const kv = localsOrEnv?.runtime?.env?.CACHE_KV ?? localsOrEnv?.CACHE_KV;
+  let runtimeEnv: any;
+  try {
+    runtimeEnv = localsOrEnv?.runtime?.env;
+  } catch {
+    // @astrojs/cloudflare v14 throws when accessing deprecated locals.runtime.env
+  }
+
+  const kv = runtimeEnv?.CACHE_KV ?? localsOrEnv?.CACHE_KV;
   if (kv && typeof kv.get === 'function' && typeof kv.put === 'function') {
     return new CloudflareKvAdapter(kv);
   }
