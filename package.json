@@ -11,16 +11,16 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@astrojs/cloudflare": "^12.6.13",
-    "astro": "^5.18.2",
+    "@astrojs/cloudflare": "^14.4.8",
+    "astro": "^7.4.12",
     "better-sqlite3": "^13.0.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260116.0",
+    "@cloudflare/workers-types": "^5.20261023.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.13.9",
     "typescript": "^5.8.2",
-    "vitest": "^3.2.7",
-    "wrangler": "^4.59.2"
+    "vitest": "^5.1.0",
+    "wrangler": "^4.164.0"
   }
 }
