@@ -549,4 +549,64 @@ describe('Chat Agent Service & Conversational Engine (Issue #6)', () => {
       expect(json.session_state.last_event_summary).toBeTruthy();
     });
   });
+
+  describe('Issue #35: Notes, Collaborator Invitations & Notes Tab Navigation', () => {
+    it('creates a trip note via natural language and sets active_tab to notes', async () => {
+      await ensureSessionTables(db);
+
+      const res = await processChatMessage(db, {
+        trip_id: 'trip-kyoto-2026',
+        message: 'Add note titled Rail Tips: Reserve oversized baggage seats on Shinkansen',
+      });
+
+      expect(res.actions_taken).toHaveLength(1);
+      expect(res.actions_taken[0].tool).toBe('manage_notes');
+      expect(res.reply).toContain('Rail Tips');
+      expect(res.ui_hint).toBe('notes');
+      expect(res.session_state?.active_tab).toBe('notes');
+
+      const storedNote = await db.queryOne<any>(
+        'SELECT * FROM trip_notes WHERE id = ?',
+        [res.actions_taken[0].payload.note_id]
+      );
+      expect(storedNote).toBeDefined();
+      expect(storedNote.title).toBe('Rail Tips');
+      expect(storedNote.content).toContain('oversized baggage');
+    });
+
+    it('invites a collaborator via natural language and persists to collaborators table', async () => {
+      await ensureSessionTables(db);
+
+      const res = await processChatMessage(db, {
+        trip_id: 'trip-kyoto-2026',
+        message: 'Invite Dana Lee (dana@example.com) to the trip as viewer',
+      });
+
+      expect(res.actions_taken).toHaveLength(1);
+      expect(res.actions_taken[0].tool).toBe('invite_collaborator');
+      expect(res.reply).toContain('Dana Lee');
+      expect(res.reply).toContain('viewer');
+
+      const collab = await db.queryOne<any>(
+        'SELECT * FROM collaborators WHERE trip_id = ? AND email = ?',
+        ['trip-kyoto-2026', 'dana@example.com']
+      );
+      expect(collab).toBeDefined();
+      expect(collab.name).toBe('Dana Lee');
+      expect(collab.role).toBe('viewer');
+    });
+
+    it('switches active_tab to notes when user asks to open or switch to notes tab', async () => {
+      await ensureSessionTables(db);
+
+      const res = await processChatMessage(db, {
+        trip_id: 'trip-kyoto-2026',
+        message: 'switch to notes tab',
+      });
+
+      expect(res.actions_taken[0].tool).toBe('navigate_session');
+      expect(res.session_state?.active_tab).toBe('notes');
+      expect(res.ui_hint).toBe('notes');
+    });
+  });
 });

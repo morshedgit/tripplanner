@@ -51,6 +51,10 @@ const REQUIRED_ICONS: IconName[] = [
   'x',
   'arrow-right-left',
   'move',
+  'thumbs-up',
+  'thumbs-down',
+  'user-plus',
+  'edit',
 ];
 
 const BANNED_EMOJIS = [
@@ -162,11 +166,33 @@ describe('Issue #25: UI Event Handlers (No define:vars IIFE) & Crisp Vector SVG 
       'window.toggleNewTripPanel = toggleNewTripPanel;',
       'window.handleCreateNewTrip = handleCreateNewTrip;',
       'window.toggleAddReservationPanel = toggleAddReservationPanel;',
+      'window.handleInlineSaveNote = handleInlineSaveNote;',
+      'window.handleEditNote = handleEditNote;',
+      'window.handleCancelEditNote = handleCancelEditNote;',
+      'window.handleDeleteNote = handleDeleteNote;',
+      'window.toggleInviteCollaboratorPanel = toggleInviteCollaboratorPanel;',
+      'window.handleInviteCollaborator = handleInviteCollaborator;',
+      'window.handleVotePdpStop = handleVotePdpStop;',
+      'window.handleDeleteReservation = handleDeleteReservation;',
     ];
 
     for (const handlerAssignment of requiredWindowHandlers) {
       expect(content).toContain(handlerAssignment);
     }
+  });
+
+  it('4b. renders Issue #35 UI containers (#tab-notes, #inviteCollaboratorPanel, #pdpUpvoteBtn, #pdpDownvoteBtn, handleDeleteReservation)', () => {
+    const content = readFileSync(indexAstroPath, 'utf8');
+
+    expect(content).toContain('id="tab-notes"');
+    expect(content).toContain('id="inviteCollaboratorPanel"');
+    expect(content).toContain('id="pdpUpvoteBtn"');
+    expect(content).toContain('id="pdpDownvoteBtn"');
+    expect(content).toContain('handleDeleteReservation(');
+    expect(content).toContain('handleInlineSaveNote(event)');
+    expect(content).toContain('handleInviteCollaborator(event)');
+    expect(content).toContain("handleVotePdpStop('up')");
+    expect(content).toContain("handleVotePdpStop('down')");
   });
 
   it('5. links exportData(format) to valid export endpoints (/export/markdown, /export/ics, /export/expenses.csv)', () => {

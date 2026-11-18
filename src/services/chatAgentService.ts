@@ -16,6 +16,8 @@ import type {
   CollaboratorBalance,
   SettlementTransfer,
 } from '../types/domain';
+import { upsertTripNote } from './checklistService';
+import { addCollaborator } from './tripService';
 
 // ============================================================================
 // Types & Interfaces
@@ -71,6 +73,7 @@ export interface ChatMessageResult {
   actions_taken: ChatAction[];
   updated_trip_summary?: TripSummary | null;
   session_state?: ChatSessionState;
+  ui_hint?: string;
 }
 
 export type ChatAgentOutput = ChatMessageResult;
@@ -1768,6 +1771,8 @@ interface ParsedIntent {
     | 'log_expense'
     | 'calculate_budget'
     | 'manage_checklist'
+    | 'manage_notes'
+    | 'invite_collaborator'
     | 'summarize_itinerary'
     | 'navigate_session'
     | 'audit_safety'
@@ -1783,15 +1788,15 @@ export function parseNaturalLanguageIntent(
   const msg = message.trim();
 
   // 0. Navigation / Tab & Day Switching:
-  // "switch to budget tab", "open wishlist", "show Day 2", "go to reservations", "view checklists"
+  // "switch to budget tab", "open wishlist", "show Day 2", "go to reservations", "view checklists", "switch to notes tab", "open notes"
   if (
-    /(?:switch|go|navigate)\s+to\s+(?:the\s+)?(itinerary|wishlist|reservations?|bookings?|budget|splits?|checklists?)\s*(?:tab)?/i.test(msg) ||
-    /open\s+(?:the\s+)?(itinerary|wishlist|reservations?|bookings?|budget|splits?|checklists?)(?:\s+tab)?/i.test(msg) ||
+    /(?:switch|go|navigate)\s+to\s+(?:the\s+)?(itinerary|wishlist|reservations?|bookings?|budget|splits?|checklists?|notes?)\s*(?:tab)?/i.test(msg) ||
+    /open\s+(?:the\s+)?(itinerary|wishlist|reservations?|bookings?|budget|splits?|checklists?|notes?)(?:\s+tab)?/i.test(msg) ||
     /(?:show|view|switch\s+to|go\s+to|filter\s+to)\s+day\s+(\d+)/i.test(msg) ||
-    /(?:show|view)\s+(?:the\s+)?(itinerary|wishlist|reservations?|bookings?|budget|splits?|checklists?)\s*(?:tab)?/i.test(msg)
+    /(?:show|view)\s+(?:the\s+)?(itinerary|wishlist|reservations?|bookings?|budget|splits?|checklists?|notes?)\s*(?:tab)?/i.test(msg)
   ) {
     const dayMatch = msg.match(/day\s+(\d+)/i);
-    const tabMatch = msg.match(/(itinerary|wishlist|reservations?|bookings?|budget|splits?|checklists?)/i);
+    const tabMatch = msg.match(/(itinerary|wishlist|reservations?|bookings?|budget|splits?|checklists?|notes?)/i);
 
     let activeTab: string | undefined;
     if (tabMatch) {
@@ -1800,6 +1805,7 @@ export function parseNaturalLanguageIntent(
       else if (rawTab.startsWith('split') || rawTab.startsWith('budg')) activeTab = 'budget';
       else if (rawTab.startsWith('check')) activeTab = 'checklists';
       else if (rawTab.startsWith('wish')) activeTab = 'wishlist';
+      else if (rawTab.startsWith('note')) activeTab = 'notes';
       else if (rawTab.startsWith('itin')) activeTab = 'itinerary';
     }
 
@@ -1813,6 +1819,81 @@ export function parseNaturalLanguageIntent(
       intent: 'navigate_session',
       params: { activeTab, activeDayNumber },
     };
+  }
+
+  // 0b. Manage Notes: "Add note: Buy ICOCA card at Kansai Airport", "Create trip note titled Rail Tips: Reserve baggage seats"
+  const titledNoteMatch = msg.match(
+    /^(?:add|create|save|write|new)\s+(?:a\s+)?(?:trip\s+)?note\s+(?:titled|called|named)\s+["']?([^:"'\n]+?)["']?\s*(?::|-)\s*(.+)$/is
+  );
+  if (titledNoteMatch) {
+    return {
+      intent: 'manage_notes',
+      params: {
+        title: titledNoteMatch[1].trim(),
+        content: titledNoteMatch[2].trim(),
+      },
+    };
+  }
+
+  const colonNoteMatch = msg.match(
+    /^(?:add|create|save|write|new)\s+(?:a\s+)?(?:trip\s+)?note\s*:\s*(.+)$/is
+  );
+  if (colonNoteMatch) {
+    const rawBody = colonNoteMatch[1].trim();
+    const title = rawBody.length <= 60 ? rawBody : `${rawBody.slice(0, 57)}...`;
+    return {
+      intent: 'manage_notes',
+      params: {
+        title,
+        content: rawBody,
+      },
+    };
+  }
+
+  const plainNoteMatch = msg.match(
+    /^(?:add|create|save|write)\s+(?:a\s+)?(?:trip\s+)?note\s+(?:about\s+|that\s+)?(.+)$/is
+  );
+  if (plainNoteMatch) {
+    const rawBody = plainNoteMatch[1].trim();
+    const title = rawBody.length <= 60 ? rawBody : `${rawBody.slice(0, 57)}...`;
+    return {
+      intent: 'manage_notes',
+      params: {
+        title,
+        content: rawBody,
+      },
+    };
+  }
+
+  // 0c. Invite Collaborator: "Invite Charlie (charlie@example.com) to the trip", "Add collaborator Dana <dana@example.com> as viewer"
+  if (/^(?:invite|add\s+collaborator)\s+/i.test(msg)) {
+    const emailMatch = msg.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+    if (emailMatch) {
+      const email = emailMatch[1].trim();
+      const roleMatch = msg.match(/\bas\s+(?:an?\s+)?(owner|editor|viewer)\b/i);
+      const role = roleMatch ? (roleMatch[1].toLowerCase() as 'owner' | 'editor' | 'viewer') : 'editor';
+
+      let name = msg
+        .replace(/^(?:invite|add\s+collaborator)\s+/i, '')
+        .replace(/\([^)]*@[^)]*\)/g, '')
+        .replace(/<[^>]*@[^>]*>/g, '')
+        .replace(/\bwith\s+email\s+\S+/gi, '')
+        .replace(email, '')
+        .replace(/\s+to\s+(?:the\s+|this\s+|our\s+)?trip.*$/i, '')
+        .replace(/\s+as\s+(?:an?\s+)?(?:owner|editor|viewer).*$/i, '')
+        .replace(/^[\s,"':;-]+|[\s,"':;-]+$/g, '')
+        .trim();
+
+      if (!name) {
+        const localPart = email.split('@')[0] || 'Collaborator';
+        name = localPart.charAt(0).toUpperCase() + localPart.slice(1);
+      }
+
+      return {
+        intent: 'invite_collaborator',
+        params: { name, email, role },
+      };
+    }
   }
 
   // 1. Create Trip: "Plan a 3-day trip to Tokyo", "Create a 4-day trip to Paris", "Plan trip to Rome"
@@ -2216,6 +2297,56 @@ export async function processChatMessage(
       break;
     }
 
+    case 'manage_notes': {
+      if (!activeTripId) {
+        const tripRes = await executeCreateTrip(db, { destination: 'Kyoto', dayCount: 3 });
+        activeTripId = tripRes.trip.id;
+        actionsTaken.push(...tripRes.actions);
+      }
+      const note = await upsertTripNote(db, activeTripId, {
+        title: parsed.params.title,
+        content_markdown: parsed.params.content,
+      });
+      actionsTaken.push({
+        tool: 'manage_notes',
+        summary: `Saved trip note: ${note.title}`,
+        payload: {
+          note_id: note.id,
+          title: note.title,
+          content: note.content,
+          active_tab: 'notes',
+          ui_hint: 'notes',
+        },
+      });
+      reply = `**Trip Note Saved!**\n\n• **${note.title}**: ${note.content}`;
+      break;
+    }
+
+    case 'invite_collaborator': {
+      if (!activeTripId) {
+        const tripRes = await executeCreateTrip(db, { destination: 'Kyoto', dayCount: 3 });
+        activeTripId = tripRes.trip.id;
+        actionsTaken.push(...tripRes.actions);
+      }
+      const collaborator = await addCollaborator(db, activeTripId, {
+        name: parsed.params.name,
+        email: parsed.params.email,
+        role: parsed.params.role || 'editor',
+      });
+      actionsTaken.push({
+        tool: 'invite_collaborator',
+        summary: `Invited collaborator ${collaborator.name} (${collaborator.email}) as ${collaborator.role}`,
+        payload: {
+          collaborator_id: collaborator.id,
+          name: collaborator.name,
+          email: collaborator.email,
+          role: collaborator.role,
+        },
+      });
+      reply = `**Collaborator Invited!** Added **${collaborator.name}** (${collaborator.email}) to the trip as **${collaborator.role}**.`;
+      break;
+    }
+
     case 'summarize_itinerary': {
       if (!activeTripId) {
         reply = "No active trip found to summarize. Ask me to plan a trip!";
@@ -2355,6 +2486,8 @@ export async function processChatMessage(
     if (primaryAction === 'navigate_session') {
       if (payload.active_tab) newTab = payload.active_tab;
       if (payload.active_day_number !== undefined) newDayNum = payload.active_day_number;
+    } else if (primaryAction === 'manage_notes') {
+      newTab = 'notes';
     } else if (parsed.params?.dayNumber !== undefined && typeof parsed.params.dayNumber === 'number') {
       newDayNum = parsed.params.dayNumber;
     } else if (parsed.params?.targetDayNumber !== undefined && typeof parsed.params.targetDayNumber === 'number') {
@@ -2426,11 +2559,16 @@ export async function processChatMessage(
     updatedSummary = await getTripSummary(db, activeTripId);
   }
 
+  const uiHint =
+    actionsTaken.find((a) => a.payload?.ui_hint)?.payload?.ui_hint ||
+    (actionsTaken[0]?.tool === 'navigate_session' ? sessionState.active_tab : undefined);
+
   return {
     reply,
     trip_id: activeTripId || '',
     actions_taken: actionsTaken,
     updated_trip_summary: updatedSummary,
     session_state: sessionState,
+    ...(uiHint ? { ui_hint: uiHint } : {}),
   };
 }
